@@ -108,7 +108,10 @@ static void __mfc_deinit_dec_ctx(struct mfc_ctx *ctx)
 	mfc_delete_queue(&ctx->meminfo_inbuf_q);
 
 	mfc_mem_cleanup_user_shared_handle(ctx, &dec->sh_handle_hdr);
-	vfree(dec->hdr10_plus_info);
+
+	if (dec->hdr10_plus_info)
+		vfree(dec->hdr10_plus_info);
+
 	kfree(dec);
 }
 

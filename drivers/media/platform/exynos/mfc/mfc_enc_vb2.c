@@ -75,12 +75,13 @@ static int mfc_enc_queue_setup(struct vb2_queue *vq,
 		if (*buf_count > MFC_MAX_BUFFERS)
 			*buf_count = MFC_MAX_BUFFERS;
 
+		/* need to use minimum size to prevent qbuf fail */
 		if (*plane_count == 1) {
-			psize[0] = raw->total_plane_size;
+			psize[0] = 1;
 			alloc_devs[0] = dev->device;
 		} else {
 			for (i = 0; i < *plane_count; i++) {
-				psize[i] = raw->plane_size[i];
+				psize[i] = 1;
 				alloc_devs[i] = dev->device;
 			}
 		}

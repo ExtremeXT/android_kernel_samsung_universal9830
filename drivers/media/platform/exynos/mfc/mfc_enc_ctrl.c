@@ -972,6 +972,43 @@ static int mfc_enc_to_ctx_ctrls(struct mfc_ctx *ctx, struct list_head *head)
 	return 0;
 }
 
+static void __mfc_enc_store_buf_ctrls_temporal_svc(int id,
+			struct mfc_enc_params *p,
+			struct temporal_layer_info *temporal_LC)
+{
+	unsigned int num_layer = temporal_LC->temporal_layer_count;
+	int i;
+
+	switch (id) {
+	case V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER_CH:
+		p->codec.h264.num_hier_layer = num_layer & 0x7;
+		for (i = 0; i < (num_layer & 0x7); i++)
+			p->codec.h264.hier_bit_layer[i] =
+				temporal_LC->temporal_layer_bitrate[i];
+		break;
+	case V4L2_CID_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_LAYER_CH:
+		p->codec.hevc.num_hier_layer = num_layer & 0x7;
+		for (i = 0; i < (num_layer & 0x7); i++)
+			p->codec.hevc.hier_bit_layer[i] =
+				temporal_LC->temporal_layer_bitrate[i];
+		break;
+	case V4L2_CID_MPEG_VIDEO_VP8_HIERARCHICAL_CODING_LAYER_CH:
+		p->codec.vp8.num_hier_layer = num_layer & 0x7;
+		for (i = 0; i < (num_layer & 0x7); i++)
+			p->codec.vp8.hier_bit_layer[i] =
+				temporal_LC->temporal_layer_bitrate[i];
+		break;
+	case V4L2_CID_MPEG_VIDEO_VP9_HIERARCHICAL_CODING_LAYER_CH:
+		p->codec.vp9.num_hier_layer = num_layer & 0x7;
+		for (i = 0; i < (num_layer & 0x7); i++)
+			p->codec.vp9.hier_bit_layer[i] =
+				temporal_LC->temporal_layer_bitrate[i];
+		break;
+	default:
+		break;
+	}
+}
+
 static void __mfc_enc_set_buf_ctrls_temporal_svc(struct mfc_ctx *ctx,
 			struct mfc_buf_ctrl *buf_ctrl)
 {
@@ -993,6 +1030,10 @@ static void __mfc_enc_set_buf_ctrls_temporal_svc(struct mfc_ctx *ctx,
 		memcpy(&temporal_LC,
 			enc->sh_handle_svc.vaddr, sizeof(struct temporal_layer_info));
 
+		/* Store temporal layer information */
+		__mfc_enc_store_buf_ctrls_temporal_svc(buf_ctrl->id, p,
+				&temporal_LC);
+
 		if(((temporal_LC.temporal_layer_count & 0x7) < 1) ||
 			((temporal_LC.temporal_layer_count > 3) && IS_VP8_ENC(ctx)) ||
 			((temporal_LC.temporal_layer_count > 3) && IS_VP9_ENC(ctx))) {
@@ -1004,9 +1045,6 @@ static void __mfc_enc_set_buf_ctrls_temporal_svc(struct mfc_ctx *ctx,
 					temporal_LC.temporal_layer_count);
 			return;
 		}
-
-		if (IS_H264_ENC(ctx))
-			p->codec.h264.num_hier_layer = temporal_LC.temporal_layer_count & 0x7;
 
 		/* enable RC_BIT_RATE_CHANGE */
 		value = MFC_READL(buf_ctrl->flag_addr);
@@ -1076,7 +1114,6 @@ static void __mfc_enc_set_buf_ctrls_temporal_svc(struct mfc_ctx *ctx,
 		}
 		MFC_WRITEL(value, MFC_REG_E_H264_HD_SVC_EXTENSION_0);
 		MFC_WRITEL(value2, MFC_REG_E_H264_HD_SVC_EXTENSION_1);
-		p->codec.h264.base_priority = buf_ctrl->val;
 		mfc_debug(3, "[HIERARCHICAL] EXTENSION0 %#x, EXTENSION1 %#x\n",
 				value, value2);
 	}
@@ -1164,13 +1201,18 @@ static void __mfc_enc_set_buf_ctrls_exception(struct mfc_ctx *ctx,
 	/* set drop control */
 	if (buf_ctrl->id == V4L2_CID_MPEG_VIDEO_DROP_CONTROL) {
 		p->rc_frame_delta = mfc_enc_get_ts_delta(ctx);
+
 		value = MFC_READL(MFC_REG_E_RC_FRAME_RATE);
 		value &= ~(0xFFFF);
 		value |= (p->rc_frame_delta & 0xFFFF);
 		MFC_WRITEL(value, MFC_REG_E_RC_FRAME_RATE);
-		mfc_debug(3, "[DROPCTRL] fps %d -> %ld, delta: %d, reg: %#x\n",
+		if (ctx->ts_last_interval)
+			mfc_debug(3, "[DROPCTRL] fps %d -> %ld, delta: %d, reg: %#x\n",
 				p->rc_framerate, USEC_PER_SEC / ctx->ts_last_interval,
 				p->rc_frame_delta, value);
+		else
+			mfc_debug(3, "[DROPCTRL] fps %d -> 0, delta: %d, reg: %#x\n",
+				p->rc_framerate, p->rc_frame_delta, value);
 	}
 }
 
@@ -1350,6 +1392,10 @@ static int mfc_enc_set_buf_ctrls_val_nal_q(struct mfc_ctx *ctx,
 			memcpy(&temporal_LC,
 				enc->sh_handle_svc.vaddr, sizeof(struct temporal_layer_info));
 
+			/* Store temporal layer information */
+			__mfc_enc_store_buf_ctrls_temporal_svc(buf_ctrl->id, p,
+					&temporal_LC);
+
 			if (((temporal_LC.temporal_layer_count & 0x7) < 1) ||
 				((temporal_LC.temporal_layer_count > 3) && IS_VP8_ENC(ctx)) ||
 				((temporal_LC.temporal_layer_count > 3) && IS_VP9_ENC(ctx))) {
@@ -1358,10 +1404,6 @@ static int mfc_enc_set_buf_ctrls_val_nal_q(struct mfc_ctx *ctx,
 						temporal_LC.temporal_layer_count);
 				return 0;
 			}
-
-			if (IS_H264_ENC(ctx))
-				p->codec.h264.num_hier_layer =
-					temporal_LC.temporal_layer_count & 0x7;
 
 			/* enable RC_BIT_RATE_CHANGE */
 			if (temporal_LC.temporal_layer_bitrate[0] > 0 || p->hier_bitrate_ctrl)
@@ -1444,7 +1486,6 @@ static int mfc_enc_set_buf_ctrls_val_nal_q(struct mfc_ctx *ctx,
 				else
 					pInStr->H264HDSvcExtension1 |=
 						((buf_ctrl->val & 0x3f) + i) << (6 * (i - 5));
-			p->codec.h264.base_priority = buf_ctrl->val;
 			param_change = 1;
 			break;
 		case V4L2_CID_MPEG_MFC_CONFIG_QP:
@@ -1479,19 +1520,35 @@ static int mfc_enc_set_buf_ctrls_val_nal_q(struct mfc_ctx *ctx,
 				p->rc_frame_delta = p->rc_framerate_res / p->rc_framerate;
 				mfc_debug(3, "[NALQ][DROPCTRL] default delta: %d\n", p->rc_frame_delta);
 			} else {
+				/*
+				 * FRAME_DELTA specifies the amount of
+				 * increment of frame modulo base time.
+				 * So, we will take to framerate resolution / fps concept.
+				 * - delta unit = framerate resolution / fps
+				 * - fps = 1000000(usec per sec) / timestamp interval
+				 * For the sophistication of calculation, we will divide later.
+				 * Excluding H.263, resolution is fixed to 10000,
+				 * so thie is also divided into pre-calculated 100.
+				 * (Preventing both overflow and calculation duplication)
+				 */
 				if (IS_H263_ENC(ctx))
-					p->rc_frame_delta = (ctx->ts_last_interval / 100) / p->rc_framerate_res;
+					p->rc_frame_delta = ctx->ts_last_interval *
+						p->rc_framerate_res / 1000000;
 				else
-					p->rc_frame_delta = ctx->ts_last_interval / p->rc_framerate_res;
+					p->rc_frame_delta = ctx->ts_last_interval / 100;
 			}
 			pInStr->RcFrameRate &= ~(0xFFFF << 16);
 			pInStr->RcFrameRate |= (p->rc_framerate_res & 0xFFFF) << 16;
 			pInStr->RcFrameRate &= ~(buf_ctrl->mask << buf_ctrl->shft);
 			pInStr->RcFrameRate |=
 				(p->rc_frame_delta & buf_ctrl->mask) << buf_ctrl->shft;
-			mfc_debug(3, "[NALQ][DROPCTRL] fps %d -> %ld, delta: %d, reg: %#x\n",
+			if (ctx->ts_last_interval)
+				mfc_debug(3, "[NALQ][DROPCTRL] fps %d -> %ld, delta: %d, reg: %#x\n",
 					p->rc_framerate, USEC_PER_SEC / ctx->ts_last_interval,
 					p->rc_frame_delta, pInStr->RcFrameRate);
+			else
+				mfc_debug(3, "[NALQ][DROPCTRL] fps %d -> 0, delta: %d, reg: %#x\n",
+					p->rc_framerate, p->rc_frame_delta, pInStr->RcFrameRate);
 			break;
 		/* If new dynamic controls are added, insert here */
 		default:

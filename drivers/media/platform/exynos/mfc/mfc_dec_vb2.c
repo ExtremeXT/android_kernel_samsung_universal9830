@@ -29,7 +29,6 @@ static int mfc_dec_queue_setup(struct vb2_queue *vq,
 {
 	struct mfc_ctx *ctx = vq->drv_priv;
 	struct mfc_dev *dev = ctx->dev;
-	struct mfc_dec *dec = ctx->dec_priv;
 	struct mfc_raw_info *raw;
 	int i;
 
@@ -49,7 +48,8 @@ static int mfc_dec_queue_setup(struct vb2_queue *vq,
 		if (*buf_count > MFC_MAX_BUFFERS)
 			*buf_count = MFC_MAX_BUFFERS;
 
-		psize[0] = dec->src_buf_size;
+		/* need to use minimum size to prevent qbuf fail */
+		psize[0] = 1;
 		alloc_devs[0] = dev->device;
 	/* Video capture for decoding (destination)
 	 * this can be set after the header was parsed */

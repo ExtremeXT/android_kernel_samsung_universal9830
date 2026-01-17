@@ -58,6 +58,12 @@ void mfc_set_linear_stride_size(struct mfc_ctx *ctx, struct mfc_fmt *fmt)
 	case V4L2_PIX_FMT_YUV420N:
 	case V4L2_PIX_FMT_YVU420M:
 		raw->stride[0] = ALIGN(ctx->img_width, 16);
+		if ((ctx->buf_stride > raw->stride[0]) &&
+				(ctx->buf_stride % 16 == 0)) {
+			mfc_debug(2, "[FRAME] using user stride(%d) not HW stride(%d)\n",
+					ctx->buf_stride, raw->stride[0]);
+			raw->stride[0] = ctx->buf_stride;
+		}
 		raw->stride[1] = ALIGN(raw->stride[0] >> 1, 16);
 		raw->stride[2] = ALIGN(raw->stride[0] >> 1, 16);
 		break;
@@ -96,10 +102,22 @@ void mfc_set_linear_stride_size(struct mfc_ctx *ctx, struct mfc_fmt *fmt)
 		raw->stride_2bits[2] = 0;
 		break;
 	case V4L2_PIX_FMT_RGB24:
+		ctx->rgb_bpp = 24;
+		raw->stride[0] = ALIGN(ctx->img_width, 16) * (ctx->rgb_bpp / 8);
+		raw->stride[1] = 0;
+		raw->stride[2] = 0;
+		break;
 	case V4L2_PIX_FMT_RGB565:
+		ctx->rgb_bpp = 16;
+		raw->stride[0] = ALIGN(ctx->img_width, 16) * (ctx->rgb_bpp / 8);
+		raw->stride[1] = 0;
+		raw->stride[2] = 0;
+		break;
 	case V4L2_PIX_FMT_RGB32X:
 	case V4L2_PIX_FMT_BGR32:
 	case V4L2_PIX_FMT_ARGB32:
+	case V4L2_PIX_FMT_RGB32:
+		ctx->rgb_bpp = 32;
 		raw->stride[0] = ALIGN(ctx->img_width, 16) * (ctx->rgb_bpp / 8);
 		raw->stride[1] = 0;
 		raw->stride[2] = 0;
@@ -167,6 +185,8 @@ void mfc_dec_calc_dpb_size(struct mfc_ctx *ctx)
 	int i;
 	int extra = MFC_LINEAR_BUF_SIZE;
 
+	mfc_set_linear_stride_size(ctx, ctx->dst_fmt);
+
 	raw = &ctx->raw_buf;
 	raw->total_plane_size = 0;
 
@@ -195,9 +215,9 @@ void mfc_dec_calc_dpb_size(struct mfc_ctx *ctx)
 		break;
 	case V4L2_PIX_FMT_YUV420M:
 	case V4L2_PIX_FMT_YVU420M:
-		raw->plane_size[0] = __mfc_calc_plane(ctx->img_width, ctx->img_height, 0) + extra;
-		raw->plane_size[1] = __mfc_calc_plane(ctx->img_width, ctx->img_height, 0) / 2 + extra;
-		raw->plane_size[2] = __mfc_calc_plane(ctx->img_width, ctx->img_height, 0) / 2 + extra;
+		raw->plane_size[0] = raw->stride[0] * ALIGN(ctx->img_height, 16) + extra;
+		raw->plane_size[1] = raw->stride[1] * ALIGN(ctx->img_height, 16) / 2 + extra;
+		raw->plane_size[2] = raw->stride[2] * ALIGN(ctx->img_height, 16) / 2 + extra;
 		break;
 	case V4L2_PIX_FMT_NV16M_S10B:
 	case V4L2_PIX_FMT_NV61M_S10B:
@@ -252,8 +272,6 @@ void mfc_dec_calc_dpb_size(struct mfc_ctx *ctx)
 		break;
 	}
 
-	mfc_set_linear_stride_size(ctx, ctx->dst_fmt);
-
 	/*
 	 * In case of 10bit,
 	 * we do not update to min dpb size.
@@ -307,6 +325,8 @@ void mfc_enc_calc_src_size(struct mfc_ctx *ctx)
 	unsigned int mb_width, mb_height, default_size;
 	int i, extra;
 
+	mfc_set_linear_stride_size(ctx, ctx->src_fmt);
+
 	raw = &ctx->raw_buf;
 	raw->total_plane_size = 0;
 	mb_width = WIDTH_MB(ctx->img_width);
@@ -323,9 +343,9 @@ void mfc_enc_calc_src_size(struct mfc_ctx *ctx)
 	case V4L2_PIX_FMT_YUV420M:
 	case V4L2_PIX_FMT_YUV420N:
 	case V4L2_PIX_FMT_YVU420M:
-		raw->plane_size[0] = ALIGN(default_size, 256) + extra;
-		raw->plane_size[1] = ALIGN(default_size >> 2, 256) + extra;
-		raw->plane_size[2] = ALIGN(default_size >> 2, 256) + extra;
+		raw->plane_size[0] = raw->stride[0] * ALIGN(ctx->img_height, 16) + extra;
+		raw->plane_size[1] = raw->stride[1] * ALIGN(ctx->img_height, 16) / 2 + extra;
+		raw->plane_size[2] = raw->stride[2] * ALIGN(ctx->img_height, 16) / 2 + extra;
 		break;
 	case V4L2_PIX_FMT_NV12M_S10B:
 	case V4L2_PIX_FMT_NV21M_S10B:
@@ -367,18 +387,12 @@ void mfc_enc_calc_src_size(struct mfc_ctx *ctx)
 		raw->plane_size[1] = ALIGN(default_size, 256) * 2 + extra;
 		break;
 	case V4L2_PIX_FMT_RGB24:
-		ctx->rgb_bpp = 24;
-		raw->plane_size[0] = ALIGN((default_size * (ctx->rgb_bpp / 8)), 256) + extra;
-		break;
 	case V4L2_PIX_FMT_RGB565:
-		ctx->rgb_bpp = 16;
-		raw->plane_size[0] = ALIGN((default_size * (ctx->rgb_bpp / 8)), 256) + extra;
-		break;
 	case V4L2_PIX_FMT_RGB32X:
 	case V4L2_PIX_FMT_BGR32:
 	case V4L2_PIX_FMT_ARGB32:
-		ctx->rgb_bpp = 32;
-		raw->plane_size[0] = ALIGN((default_size * (ctx->rgb_bpp / 8)), 256) + extra;
+	case V4L2_PIX_FMT_RGB32:
+		raw->plane_size[0] = raw->stride[0] * ctx->img_height + extra;
 		break;
 	/* for compress format (SBWC) */
 	case V4L2_PIX_FMT_NV12M_SBWC_8B:
@@ -416,8 +430,6 @@ void mfc_enc_calc_src_size(struct mfc_ctx *ctx)
 		mfc_err_ctx("Invalid pixel format(%d)\n", ctx->src_fmt->fourcc);
 		break;
 	}
-
-	mfc_set_linear_stride_size(ctx, ctx->src_fmt);
 
 	for (i = 0; i < raw->num_planes; i++) {
 		if (raw->plane_size[i] < ctx->min_dpb_size[i])

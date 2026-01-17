@@ -609,6 +609,7 @@ static int mfc_enc_s_fmt_vid_out_mplane(struct file *file, void *priv,
 {
 	struct mfc_ctx *ctx = fh_to_mfc_ctx(file->private_data);
 	struct v4l2_pix_format_mplane *pix_fmt_mp = &f->fmt.pix_mp;
+	struct mfc_fmt *prev_src_fmt = NULL;
 	struct mfc_fmt *fmt = NULL;
 
 	mfc_debug_enter();
@@ -623,6 +624,8 @@ static int mfc_enc_s_fmt_vid_out_mplane(struct file *file, void *priv,
 		return 0;
 	}
 
+	/* Backup previous format */
+	prev_src_fmt = ctx->src_fmt;
 	fmt = __mfc_enc_find_format(ctx, pix_fmt_mp->pixelformat);
 	if (!fmt) {
 		mfc_err_ctx("Unsupported format for source\n");
@@ -646,9 +649,14 @@ static int mfc_enc_s_fmt_vid_out_mplane(struct file *file, void *priv,
 	if (ctx->is_sbwc_lossy && __mfc_enc_check_sbwcl(ctx, pix_fmt_mp->flags))
 		return -EINVAL;
 
+	/* Dynamic Resolution & Format Changes */
 	if (ctx->state == MFCINST_FINISHED) {
 		mfc_change_state(ctx, MFCINST_GOT_INST);
-		mfc_info_ctx("[DRC] Enc resolution is changed\n");
+		if (ctx->src_fmt->fourcc != prev_src_fmt->fourcc)
+			mfc_info_ctx("[DFC] Enc Dynamic Format Changed %s -> %s\n",
+					prev_src_fmt->name, ctx->src_fmt->name);
+		else
+			mfc_info_ctx("[DRC] Enc Dynamic Resolution Changed\n");
 	}
 
 	mfc_info_ctx("[FRAME] enc src pixelformat : %s\n", ctx->src_fmt->name);
@@ -1087,6 +1095,8 @@ static int __mfc_enc_get_ctrl_val(struct mfc_ctx *ctx, struct v4l2_control *ctrl
 	case V4L2_CID_MPEG_MFC51_VIDEO_LUMA_ADDR:
 	case V4L2_CID_MPEG_MFC51_VIDEO_CHROMA_ADDR:
 	case V4L2_CID_MPEG_MFC51_VIDEO_FRAME_STATUS:
+	case V4L2_CID_MPEG_VIDEO_SRC_BUF_FLAG:
+	case V4L2_CID_MPEG_VIDEO_DST_BUF_FLAG:
 		list_for_each_entry(ctx_ctrl, &ctx->ctrls, list) {
 			if (!(ctx_ctrl->type & MFC_CTRL_TYPE_GET))
 				continue;
@@ -1266,6 +1276,12 @@ static int __mfc_enc_set_param(struct mfc_ctx *ctx, struct v4l2_control *ctrl)
 	int ret = 0;
 
 	switch (ctrl->id) {
+	case V4L2_CID_CACHEABLE:
+		mfc_debug(5, "it is supported only V4L2_MEMORY_MMAP\n");
+		break;
+	case V4L2_CID_MPEG_VIDEO_QOS_RATIO:
+		ctx->qos_ratio = ctrl->value;
+		break;
 	case V4L2_CID_MPEG_VIDEO_PRIORITY:
 		ctx->prio = ctrl->value;
 		mfc_update_real_time(ctx);
@@ -1993,6 +2009,20 @@ static int __mfc_enc_set_param(struct mfc_ctx *ctx, struct v4l2_control *ctrl)
 		mfc_update_real_time(ctx);
 		mfc_debug(2, "[QoS] user set the operating frame rate: %d\n", ctrl->value);
 		break;
+	/* These are stored in specific variables */
+	case V4L2_CID_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_LAYER_CH:
+	case V4L2_CID_MPEG_VIDEO_VP9_HIERARCHICAL_CODING_LAYER_CH:
+	case V4L2_CID_MPEG_VIDEO_VP8_HIERARCHICAL_CODING_LAYER_CH:
+	case V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER_CH:
+	/* These require control per buffer */
+	case V4L2_CID_MPEG_VIDEO_YSUM:
+	case V4L2_CID_MPEG_VIDEO_ROI_CONTROL:
+	case V4L2_CID_MPEG_MFC_H264_USE_LTR:
+	case V4L2_CID_MPEG_MFC_H264_MARK_LTR:
+	case V4L2_CID_MPEG_MFC51_VIDEO_FRAME_TAG:
+	case V4L2_CID_MPEG_VIDEO_SRC_BUF_FLAG:
+	case V4L2_CID_MPEG_VIDEO_DST_BUF_FLAG:
+		break;
 	default:
 		mfc_err_ctx("Invalid control: 0x%08x\n", ctrl->id);
 		ret = -EINVAL;
@@ -2011,12 +2041,14 @@ static int __mfc_enc_set_ctrl_val(struct mfc_ctx *ctx, struct v4l2_control *ctrl
 
 	mfc_debug(5, "[CTRLS] id: %#x, value: %d\n", ctrl->id, ctrl->value);
 
+	/* update parameter value */
+	ret = __mfc_enc_set_param(ctx, ctrl);
+	if (ret)
+		return ret;
+
 	switch (ctrl->id) {
 	case V4L2_CID_CACHEABLE:
-		mfc_debug(5, "it is supported only V4L2_MEMORY_MMAP\n");
-		break;
 	case V4L2_CID_MPEG_VIDEO_QOS_RATIO:
-		ctx->qos_ratio = ctrl->value;
 		break;
 	case V4L2_CID_MPEG_VIDEO_H264_MAX_QP:
 	case V4L2_CID_MPEG_VIDEO_H263_MAX_QP:
@@ -2067,6 +2099,8 @@ static int __mfc_enc_set_ctrl_val(struct mfc_ctx *ctx, struct v4l2_control *ctrl
 	case V4L2_CID_MPEG_VIDEO_YSUM:
 	case V4L2_CID_MPEG_VIDEO_RATIO_OF_INTRA:
 	case V4L2_CID_MPEG_VIDEO_DROP_CONTROL:
+	case V4L2_CID_MPEG_VIDEO_SRC_BUF_FLAG:
+	case V4L2_CID_MPEG_VIDEO_DST_BUF_FLAG:
 		list_for_each_entry(ctx_ctrl, &ctx->ctrls, list) {
 			if (!(ctx_ctrl->type & MFC_CTRL_TYPE_SET))
 				continue;
@@ -2122,7 +2156,6 @@ static int __mfc_enc_set_ctrl_val(struct mfc_ctx *ctx, struct v4l2_control *ctrl
 		}
 		break;
 	default:
-		ret = __mfc_enc_set_param(ctx, ctrl);
 		break;
 	}
 

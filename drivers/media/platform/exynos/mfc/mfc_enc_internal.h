@@ -274,6 +274,14 @@ struct mfc_fmt enc_formats[] = {
 		.mem_planes = 1,
 	},
 	{
+		.name = "RGB8888 1 Plane 32bpp",
+		.fourcc = V4L2_PIX_FMT_RGB32,
+		.codec_mode = MFC_FORMATS_NO_CODEC,
+		.type = MFC_FMT_FRAME | MFC_FMT_RGB,
+		.num_planes = 1,
+		.mem_planes = 1,
+	},
+	{
 		.name = "H264 Encoded Stream",
 		.fourcc = V4L2_PIX_FMT_H264,
 		.codec_mode = MFC_REG_CODEC_H264_ENC,

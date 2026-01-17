@@ -170,6 +170,10 @@
 				 == MFC_REG_ERR_SYNC_POINT_NOT_RECEIVED))
 
 #define IS_BUFFER_BATCH_MODE(ctx)	((ctx)->batch_mode == 1)
+#define IS_NO_HEADER_GENERATE(ctx, p)					\
+	((p->seq_hdr_mode ==						\
+	  V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME) ||		\
+	((IS_VP8_ENC(ctx) || IS_VP9_ENC(ctx)) && p->ivf_header_disable))
 
 /*
  levels with maximum property values
@@ -208,6 +212,8 @@
 #define	DEC_SET_SKYPE_FLAG		(1 << 3)
 #define	DEC_SET_HDR10_PLUS		(1 << 4)
 #define	DEC_SET_DRV_DPB_MANAGER		(1 << 5)
+/* new C2_INTERFACE: DISPLAY_DELAY, FRAME_POC */
+#define	DEC_SET_C2_INTERFACE		(1 << 6)
 #define	DEC_SET_OPERATING_FPS		(1 << 8)
 #define	DEC_SET_PRIORITY		(1 << 23)
 

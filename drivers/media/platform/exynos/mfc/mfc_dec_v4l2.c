@@ -1069,6 +1069,7 @@ static int __mfc_dec_ext_info(struct mfc_ctx *ctx)
 	int val = 0;
 
 	val |= DEC_SET_DYNAMIC_DPB;
+	val |= DEC_SET_C2_INTERFACE;
 	val |= DEC_SET_DRV_DPB_MANAGER;
 	val |= DEC_SET_OPERATING_FPS;
 	val |= DEC_SET_PRIORITY;
