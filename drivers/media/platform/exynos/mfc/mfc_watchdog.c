@@ -242,7 +242,7 @@ static void mfc_merge_errorinfo_data(struct mfc_dev *dev, bool px_fault)
 	dev_err(dev->device, "%s\n", errorinfo);
 
 #ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
-	sec_debug_set_extra_info_mfc_error(errorinfo);
+	secdbg_exin_set_mfc_error(errorinfo);
 #endif
 }
 

@@ -82,6 +82,10 @@
 #define V4L2_PIX_FMT_NV12N_SBWCL_8B	v4l2_fourcc('N', '1', 'L', '8')
 #define V4L2_PIX_FMT_NV12N_SBWCL_10B	v4l2_fourcc('N', '1', 'L', '1')
 
+/* 12 Y/CbCr 4:2:0 AFBC */
+#define V4L2_PIX_FMT_NV12M_AFBC_8B	v4l2_fourcc('M', '1', 'A', '8')
+#define V4L2_PIX_FMT_NV12M_AFBC_10B	v4l2_fourcc('M', '1', 'A', '1')
+
 /* helper macros */
 #ifndef __ALIGN_UP
 #define __ALIGN_UP(x, a)		(((x) + ((a) - 1)) & ~((a) - 1))
@@ -146,4 +150,16 @@
 
 #define SBWCL_8B_CBCR_BASE(base, w, h, r)	((base) + SBWCL_8B_Y_SIZE(w, h, r))
 #define SBWCL_10B_CBCR_BASE(base, w, h, r)	((base) + SBWCL_10B_Y_SIZE(w, h, r))
+
+/* AFBC */
+#define AFBC_8B_STRIDE(w)		__ALIGN_UP(w, 16)
+#define AFBC_10B_STRIDE(w)		__ALIGN_UP(w * 2, 16)
+
+#define AFBC_8B_Y_SIZE(w, h)							\
+	((((((w) + 31) / 32) * (((h) + 7) / 8) * 16 + 127) / 128) * 128 +	\
+	(((w) + 31) / 32) * (((h) + 7) / 8) * 384)
+#define AFBC_10B_Y_SIZE(w, h)							\
+	((((((w) + 31) / 32) * (((h) + 7) / 8) * 16 + 127) / 128) * 128 +	\
+	(((w) + 31) / 32) * (((h) + 7) / 8) * 512)
+
 #endif /* __LINUX_VIDEODEV2_EXYNOS_MEDIA_H */

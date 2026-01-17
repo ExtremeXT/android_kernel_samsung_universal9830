@@ -21,8 +21,6 @@
 #include <linux/seq_file.h>
 #include <linux/poll.h>
 
-#include <../../../../soc/google/pt/pt.h>
-
 #include "mfc_common.h"
 
 #include "mfc_isr.h"
@@ -1809,7 +1807,7 @@ static int mfc_remove(struct platform_device *pdev)
 		iounmap(dev->sysmmu1_base);
 	iounmap(dev->sysmmu0_base);
 	iounmap(dev->regs_base);
-	pt_client_unregister(dev->pt_handle);
+	//pt_client_unregister(dev->pt_handle);
 	release_mem_region(dev->mfc_mem->start, resource_size(dev->mfc_mem));
 	mfc_pm_final(dev);
 	kfree(dev);

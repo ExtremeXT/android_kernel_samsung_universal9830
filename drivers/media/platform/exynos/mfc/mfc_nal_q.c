@@ -573,7 +573,7 @@ static void __mfc_nal_q_set_slice_mode(struct mfc_ctx *ctx, EncoderInputStr *pIn
 	if ((enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB) ||
 			(enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB_ROW)) {
 		pInStr->MsliceSizeMb = enc->slice_size_mb;
-	} else if ((enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES) ||
+	} else if ((enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES) ||
 			(enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_FIXED_BYTES)) {
 		pInStr->MsliceSizeBits = enc->slice_size_bits;
 	} else {
@@ -1826,8 +1826,8 @@ static void __mfc_nal_q_handle_frame_output(struct mfc_ctx *ctx,
 	}
 
 	/* Broken buffer is not dequeued to user */
-	if (!dev->pdata->broken_display && IS_NO_DISPLAY(ctx, err))
-		return;
+	//if (!dev->pdata->broken_display && IS_NO_DISPLAY(ctx, err))
+	//	return;
 
 	/* Dequeued display buffer for user */
 	__mfc_nal_q_handle_frame_output_del(ctx, pOutStr, err);
