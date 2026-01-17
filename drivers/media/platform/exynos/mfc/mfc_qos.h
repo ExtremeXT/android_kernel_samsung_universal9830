@@ -37,7 +37,7 @@ void mfc_qos_off(struct mfc_ctx *ctx);
 #else
 #define mfc_perf_boost_enable(dev)	do {} while (0)
 #define mfc_perf_boost_disable(dev)	do {} while (0)
-#define mfc_qos_on(ctx)				do {} while (0)
+#define mfc_qos_on(ctx)			do {} while (0)
 #define mfc_qos_off(ctx)		do {} while (0)
 #endif
 

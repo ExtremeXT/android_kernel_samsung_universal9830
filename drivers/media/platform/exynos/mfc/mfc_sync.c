@@ -55,14 +55,14 @@ int mfc_wait_for_done_dev(struct mfc_dev *dev, int command)
 			wait_condition(dev, command),
 			msecs_to_jiffies(MFC_INT_TIMEOUT));
 	if (ret == 0) {
-		mfc_err_dev("Interrupt (dev->int_reason:%d, command:%d) timed out\n",
+		mfc_dev_err("Interrupt (dev->int_reason:%d, command:%d) timed out\n",
 							dev->int_reason, command);
 		if (mfc_check_risc2host(dev)) {
 			ret = wait_event_timeout(dev->cmd_wq,
 					wait_condition(dev, command),
 					msecs_to_jiffies(MFC_INT_TIMEOUT * MFC_INT_TIMEOUT_CNT));
 			if (ret == 0) {
-				mfc_err_dev("Timeout: MFC driver waited for upward of %dmsec\n",
+				mfc_dev_err("Timeout: MFC driver waited for upward of %dmsec\n",
 						3 * MFC_INT_TIMEOUT);
 			} else {
 				goto wait_done;
@@ -73,7 +73,7 @@ int mfc_wait_for_done_dev(struct mfc_dev *dev, int command)
 	}
 
 wait_done:
-	mfc_debug_dev(2, "Finished waiting (dev->int_reason:%d, command: %d)\n",
+	mfc_dev_debug(2, "Finished waiting (dev->int_reason:%d, command: %d)\n",
 							dev->int_reason, command);
 	return 0;
 }
@@ -97,14 +97,14 @@ int mfc_wait_for_done_ctx(struct mfc_ctx *ctx, int command)
 			wait_condition(ctx, command),
 			msecs_to_jiffies(timeout));
 	if (ret == 0) {
-		mfc_err_ctx("Interrupt (ctx->int_reason:%d, command:%d) timed out\n",
+		mfc_ctx_err("Interrupt (ctx->int_reason:%d, command:%d) timed out\n",
 							ctx->int_reason, command);
 		if (mfc_check_risc2host(dev)) {
 			ret = wait_event_timeout(ctx->cmd_wq,
 					wait_condition(ctx, command),
 					msecs_to_jiffies(MFC_INT_TIMEOUT * MFC_INT_TIMEOUT_CNT));
 			if (ret == 0) {
-				mfc_err_ctx("Timeout: MFC driver waited for upward of %dmsec\n",
+				mfc_ctx_err("Timeout: MFC driver waited for upward of %dmsec\n",
 						3 * MFC_INT_TIMEOUT);
 			} else {
 				goto wait_done;
@@ -116,9 +116,9 @@ int mfc_wait_for_done_ctx(struct mfc_ctx *ctx, int command)
 
 wait_done:
 	if (is_err_cond(ctx)) {
-		mfc_err_ctx("Finished (ctx->int_reason:%d, command: %d)\n",
+		mfc_ctx_err("Finished (ctx->int_reason:%d, command: %d)\n",
 				ctx->int_reason, command);
-		mfc_err_ctx("But error (ctx->int_err:%d)\n", ctx->int_err);
+		mfc_ctx_err("But error (ctx->int_err:%d)\n", ctx->int_err);
 		return -1;
 	}
 
@@ -156,15 +156,15 @@ int mfc_get_new_ctx(struct mfc_dev *dev)
 
 	spin_lock_irqsave(&dev->work_bits.lock, wflags);
 
-	mfc_debug_dev(2, "Previous context: %d (bits %08lx)\n", dev->curr_ctx,
+	mfc_dev_debug(2, "Previous context: %d (bits %08lx)\n", dev->curr_ctx,
 							dev->work_bits.bits);
 
 	if (dev->preempt_ctx > MFC_NO_INSTANCE_SET) {
 		new_ctx_index = dev->preempt_ctx;
-		mfc_debug_dev(2, "preempt_ctx is : %d\n", new_ctx_index);
+		mfc_dev_debug(2, "preempt_ctx is : %d\n", new_ctx_index);
 	} else {
 		for (i = 0; i < MFC_NUM_CONTEXTS; i++) {
-			if (test_bit(i, &dev->otf_inst_bits)) {
+			if (dev->ctx[i] && dev->ctx[i]->otf_handle) {
 				if (test_bit(i, &dev->work_bits.bits)) {
 					spin_unlock_irqrestore(&dev->work_bits.lock, wflags);
 					return i;
@@ -197,15 +197,15 @@ int mfc_get_next_ctx(struct mfc_dev *dev)
 
 	spin_lock_irqsave(&dev->work_bits.lock, wflags);
 
-	mfc_debug_dev(2, "Current context: %d (bits %08lx)\n",
+	mfc_dev_debug(2, "Current context: %d (bits %08lx)\n",
 			dev->curr_ctx, dev->work_bits.bits);
 
 	while (!test_bit(next_ctx_index, &dev->work_bits.bits)) {
 		next_ctx_index = (next_ctx_index + 1) % MFC_NUM_CONTEXTS;
 		if (next_ctx_index == curr_ctx_index) {
 			/* No other context to run */
-			spin_unlock_irqrestore(&dev->work_bits.lock, wflags);
-			return -EAGAIN;
+			next_ctx_index = -EAGAIN;
+			break;
 		}
 	}
 
@@ -213,7 +213,8 @@ int mfc_get_next_ctx(struct mfc_dev *dev)
 	return next_ctx_index;
 }
 
-int __mfc_dec_ctx_ready_set_bit(struct mfc_ctx *ctx, struct mfc_bits *data, bool set)
+static int __mfc_dec_ctx_ready_set_bit(struct mfc_ctx *ctx,
+				struct mfc_bits *data, bool set)
 {
 	struct mfc_dev *dev = ctx->dev;
 	int src_buf_queue_greater_than_0 = 0;
@@ -252,7 +253,8 @@ int __mfc_dec_ctx_ready_set_bit(struct mfc_ctx *ctx, struct mfc_bits *data, bool
 		is_ready = 1;
 
 	/* Context is to return last frame */
-	else if (ctx->state == MFCINST_FINISHING && dst_buf_queue_greater_than_0)
+	else if (ctx->state == MFCINST_FINISHING &&
+		dst_buf_queue_greater_than_0)
 		is_ready = 1;
 
 	/* Context is to set buffers */
@@ -261,7 +263,8 @@ int __mfc_dec_ctx_ready_set_bit(struct mfc_ctx *ctx, struct mfc_bits *data, bool
 		is_ready = 1;
 
 	/* Resolution change */
-	else if ((ctx->state == MFCINST_RES_CHANGE_INIT || ctx->state == MFCINST_RES_CHANGE_FLUSH) &&
+	else if ((ctx->state == MFCINST_RES_CHANGE_INIT ||
+		ctx->state == MFCINST_RES_CHANGE_FLUSH) &&
 		dst_buf_queue_greater_than_0)
 		is_ready = 1;
 
@@ -273,11 +276,17 @@ int __mfc_dec_ctx_ready_set_bit(struct mfc_ctx *ctx, struct mfc_bits *data, bool
 		/* if the ctx is ready and request set_bit, set the work_bit */
 		__set_bit(ctx->num, &data->bits);
 	} else if ((is_ready == 0) && (set == false)) {
-		/* if the ctx is not ready and request clear_bit, clear the work_bit */
+		/*
+		 * if the ctx is not ready and request clear_bit,
+		 * clear the work_bit
+		 */
 		__clear_bit(ctx->num, &data->bits);
 	} else {
 		if (set == true) {
-			/* If the ctx is not ready, this is not included to S/W driver margin */
+			/*
+			 * If the ctx is not ready,
+			 * this is not included to S/W driver margin
+			 */
 			mfc_perf_cancel_drv_margin(dev);
 			mfc_debug(2, "ctx is not ready\n");
 		}
@@ -288,7 +297,8 @@ int __mfc_dec_ctx_ready_set_bit(struct mfc_ctx *ctx, struct mfc_bits *data, bool
 	return is_ready;
 }
 
-static int __mfc_enc_ctx_ready_set_bit(struct mfc_ctx *ctx, struct mfc_bits *data, bool set)
+static int __mfc_enc_ctx_ready_set_bit(struct mfc_ctx *ctx,
+				struct mfc_bits *data, bool set)
 {
 	struct mfc_enc *enc = ctx->enc_priv;
 	struct mfc_dev *dev = ctx->dev;
@@ -353,7 +363,10 @@ static int __mfc_enc_ctx_ready_set_bit(struct mfc_ctx *ctx, struct mfc_bits *dat
 		/* if the ctx is ready and request set_bit, set the work_bit */
 		__set_bit(ctx->num, &data->bits);
 	} else if ((is_ready == 0) && (set == false)) {
-		/* if the ctx is not ready and request clear_bit, clear the work_bit */
+		/*
+		 * if the ctx is not ready and request clear_bit,
+		 * clear the work_bit
+		 */
 		__clear_bit(ctx->num, &data->bits);
 	} else {
 		if (set == true) {

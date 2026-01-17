@@ -42,7 +42,7 @@ static void mmcache_print_config(struct mfc_dev *dev)
 	void __iomem *addr;
 	unsigned int size;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	if (!mmcache_dump)
 		return;
@@ -57,7 +57,7 @@ static void mmcache_print_config(struct mfc_dev *dev)
 
 	print_hex_dump(KERN_ERR, "[MMCACHE] Config:", DUMP_PREFIX_ADDRESS, 32, 4, addr, size, false);
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 static void mmcache_set_config(struct mfc_dev *dev)
@@ -65,7 +65,7 @@ static void mmcache_set_config(struct mfc_dev *dev)
 	unsigned int data, i, size;
 	const unsigned int *sfr_dump;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	size = sizeof(mmcache_SFR_0x0010);
 	sfr_dump = (const unsigned int *)mmcache_SFR_0x0010;
@@ -83,9 +83,9 @@ static void mmcache_set_config(struct mfc_dev *dev)
 		MMCACHE_WRITEL(data, MMCACHE_MASTER_GRP0_RPATH0 + i);
 	}
 
-	mfc_debug_dev(2, "[MMCACHE] mmcache config setting is done\n");
+	mfc_dev_debug(2, "[MMCACHE] mmcache config setting is done\n");
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 static void mmcache_reset_config(struct mfc_dev *dev)
@@ -93,22 +93,22 @@ static void mmcache_reset_config(struct mfc_dev *dev)
 	void __iomem *addr;
 	unsigned int data;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	addr = dev->mmcache.base + MMCACHE_MASTER_GRP_CTRL2;
 	data = 0;
 
-	mfc_debug_dev(2, "[MMCACHE] before write 0x%X: (0x%08llX) 0x%X\n",
+	mfc_dev_debug(2, "[MMCACHE] before write 0x%X: (0x%08llX) 0x%X\n",
 			data, (unsigned long long)(addr),
 			MMCACHE_READL(MMCACHE_MASTER_GRP_CTRL2));
 
 	MMCACHE_WRITEL(data, MMCACHE_MASTER_GRP_CTRL2);
 
-	mfc_debug_dev(2, "[MMCACHE] after write 0x%X: (0x%08llX) 0x%X\n",
+	mfc_dev_debug(2, "[MMCACHE] after write 0x%X: (0x%08llX) 0x%X\n",
 			data, (unsigned long long)(addr),
 			MMCACHE_READL(MMCACHE_MASTER_GRP_CTRL2));
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 static void mmcache_update_master_grp(struct mfc_dev *dev)
@@ -116,22 +116,22 @@ static void mmcache_update_master_grp(struct mfc_dev *dev)
 	void __iomem *addr;
 	unsigned int data;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	addr = dev->mmcache.base + MMCACHE_GLOBAL_CTRL;
 	data = MMCACHE_GLOBAL_CTRL_VALUE;
 
-	mfc_debug_dev(2, "[MMCACHE] before write 0x%X: (0x%08llX) 0x%X\n",
+	mfc_dev_debug(2, "[MMCACHE] before write 0x%X: (0x%08llX) 0x%X\n",
 			data, (unsigned long long)(addr),
 			MMCACHE_READL(MMCACHE_GLOBAL_CTRL));
 
 	MMCACHE_WRITEL(data, MMCACHE_GLOBAL_CTRL);
 
-	mfc_debug_dev(2, "[MMCACHE] after write 0x%X: (0x%08llX) 0x%X\n",
+	mfc_dev_debug(2, "[MMCACHE] after write 0x%X: (0x%08llX) 0x%X\n",
 			data, (unsigned long long)(addr),
 			MMCACHE_READL(MMCACHE_GLOBAL_CTRL));
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 static void mmcache_enable_clock_gating(struct mfc_dev *dev)
@@ -139,27 +139,27 @@ static void mmcache_enable_clock_gating(struct mfc_dev *dev)
 	void __iomem *addr;
 	unsigned int data;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	addr = dev->mmcache.base + MMCACHE_CG_CONTROL;
 	data = MMCACHE_CG_CONTROL_VALUE;
 
-	mfc_debug_dev(2, "[MMCACHE] before write 0x%X: (0x%08llX) 0x%X\n",
+	mfc_dev_debug(2, "[MMCACHE] before write 0x%X: (0x%08llX) 0x%X\n",
 			data, (unsigned long long)(addr),
 			MMCACHE_READL(MMCACHE_CG_CONTROL));
 
 	MMCACHE_WRITEL(data, MMCACHE_CG_CONTROL);
 
-	mfc_debug_dev(2, "[MMCACHE] after write 0x%X: (0x%08llX) 0x%X\n",
+	mfc_dev_debug(2, "[MMCACHE] after write 0x%X: (0x%08llX) 0x%X\n",
 			data, (unsigned long long)(addr),
 			MMCACHE_READL(MMCACHE_CG_CONTROL));
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 void mfc_mmcache_enable(struct mfc_dev *dev)
 {
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	if (mmcache_disable)
 		return;
@@ -170,51 +170,62 @@ void mfc_mmcache_enable(struct mfc_dev *dev)
 	mmcache_enable_clock_gating(dev);
 
 	dev->mmcache.is_on_status = 1;
-	mfc_info_dev("[MMCACHE] enabled\n");
+	mfc_dev_info("[MMCACHE] enabled\n");
 	MFC_TRACE_DEV("[MMCACHE] enabled\n");
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 void mfc_mmcache_disable(struct mfc_dev *dev)
 {
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	mmcache_reset_config(dev);
 	mmcache_update_master_grp(dev);
 
 	dev->mmcache.is_on_status = 0;
-	mfc_info_dev("[MMCACHE] disabled\n");
+	mfc_dev_info("[MMCACHE] disabled\n");
 	MFC_TRACE_DEV("[MMCACHE] disabled\n");
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 void mfc_mmcache_dump_info(struct mfc_dev *dev)
 {
 	if (dev->has_mmcache) {
-		dev_err(dev->device, "-----------dumping MMCACHE registers (SFR base = 0x%#lx)\n", (unsigned long)dev->mmcache.base);
-		print_hex_dump(KERN_ERR, "[MMCACHE] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->mmcache.base, 0x10, false);
+		dev_err(dev->device, "-----------dumping MMCACHE registers (SFR base = 0x%#lx)\n",
+				(unsigned long)dev->mmcache.base);
+		print_hex_dump(KERN_ERR, "[MMCACHE] ", DUMP_PREFIX_ADDRESS,
+				32, 4, dev->mmcache.base, 0x10, false);
 	}
 
 	if (dev->has_cmu) {
-		dev_err(dev->device, "-----------dumping CMU BUSC registers (SFR base = 0x%#lx)\n", (unsigned long)dev->cmu_busc_base);
+		dev_err(dev->device, "-----------dumping CMU BUSC registers (SFR base = 0x%#lx)\n",
+				(unsigned long)dev->cmu_busc_base);
 		/* PLL_CON0_MUX_CLKCMU_BUSC_BUS_USER (0x140) */
-		print_hex_dump(KERN_ERR, "[MMCACHE][BUSC] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->cmu_busc_base + 0x140, 0xc, false);
+		print_hex_dump(KERN_ERR, "[MMCACHE][BUSC]", DUMP_PREFIX_ADDRESS,
+			32, 4, dev->cmu_busc_base + 0x140, 0xc, false);
 		/* CMU_BUSC (0x60ec) */
-		print_hex_dump(KERN_ERR, "[MMCACHE][BUSC] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->cmu_busc_base + 0x60e0, 0x10, false);
+		print_hex_dump(KERN_ERR, "[MMCACHE][BUSC]", DUMP_PREFIX_ADDRESS,
+			32, 4, dev->cmu_busc_base + 0x60e0, 0x10, false);
 		/* DBG_NFO_QCH_CON_MMCACHE_QCH (0x7184) */
-		print_hex_dump(KERN_ERR, "[MMCACHE][BUSC] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->cmu_busc_base + 0x7180, 0x10, false);
+		print_hex_dump(KERN_ERR, "[MMCACHE][BUSC]", DUMP_PREFIX_ADDRESS,
+			32, 4, dev->cmu_busc_base + 0x7180, 0x10, false);
 
-		dev_err(dev->device, "-----------dumping CMU MIF0~3 registers (SFR base = 0x%#lx)\n", (unsigned long)dev->cmu_mif0_base);
+		dev_err(dev->device, "-----------dumping CMU MIF0~3 registers (SFR base = 0x%#lx)\n",
+				(unsigned long)dev->cmu_mif0_base);
 		/* CMU_MIF0 (0x7018 ~ 0x7024) */
-		print_hex_dump(KERN_ERR, "[MMCACHE][MIF0] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->cmu_mif0_base + 0x7018, 0x10, false);
+		print_hex_dump(KERN_ERR, "[MMCACHE][MIF0]", DUMP_PREFIX_ADDRESS,
+			32, 4, dev->cmu_mif0_base + 0x7018, 0x10, false);
 		/* CMU_MIF1 (0x7018 ~ 0x7024) */
-		print_hex_dump(KERN_ERR, "[MMCACHE][MIF1] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->cmu_mif1_base + 0x7018, 0x10, false);
+		print_hex_dump(KERN_ERR, "[MMCACHE][MIF1]", DUMP_PREFIX_ADDRESS,
+			32, 4, dev->cmu_mif1_base + 0x7018, 0x10, false);
 		/* CMU_MIF2 (0x7018 ~ 0x7024) */
-		print_hex_dump(KERN_ERR, "[MMCACHE][MIF2] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->cmu_mif2_base + 0x7018, 0x10, false);
+		print_hex_dump(KERN_ERR, "[MMCACHE][MIF2]", DUMP_PREFIX_ADDRESS,
+			32, 4, dev->cmu_mif2_base + 0x7018, 0x10, false);
 		/* CMU_MIF3 (0x7018 ~ 0x7024) */
-		print_hex_dump(KERN_ERR, "[MMCACHE][MIF3] ", DUMP_PREFIX_ADDRESS, 32, 4, dev->cmu_mif3_base + 0x7018, 0x10, false);
+		print_hex_dump(KERN_ERR, "[MMCACHE][MIF3]", DUMP_PREFIX_ADDRESS,
+			32, 4, dev->cmu_mif3_base + 0x7018, 0x10, false);
 	}
 }
 
@@ -222,17 +233,17 @@ void mfc_invalidate_mmcache(struct mfc_dev *dev)
 {
 	int ret;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	/* The secure OS can flush all normal and secure data */
 	ret = exynos_smc(SMC_CMD_MM_CACHE_OPERATION, MMCACHE_GROUP2, 0x0, 0x0);
 	if (ret != DRMDRV_OK) {
-		mfc_err_dev("[MMCACHE] Fail to invalidation 0x%x\n", ret);
+		mfc_dev_err("[MMCACHE] Fail to invalidation 0x%x\n", ret);
 		mfc_mmcache_dump_info(dev);
 		call_dop(dev, dump_and_stop_debug_mode, dev);
 	}
-	mfc_debug_dev(2, "[MMCACHE] invalidated\n");
+	mfc_dev_debug(2, "[MMCACHE] invalidated\n");
 	MFC_TRACE_DEV("[MMCACHE] invalidated\n");
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }

@@ -16,7 +16,6 @@
 #include "mfc_nal_q.h"
 #include "mfc_run.h"
 #include "mfc_sync.h"
-#include "mfc_meminfo.h"
 
 #include "mfc_queue.h"
 #include "mfc_utils.h"
@@ -29,7 +28,6 @@ static int mfc_dec_queue_setup(struct vb2_queue *vq,
 {
 	struct mfc_ctx *ctx = vq->drv_priv;
 	struct mfc_dev *dev = ctx->dev;
-	struct mfc_dec *dec = ctx->dec_priv;
 	struct mfc_raw_info *raw;
 	int i;
 
@@ -49,7 +47,7 @@ static int mfc_dec_queue_setup(struct vb2_queue *vq,
 		if (*buf_count > MFC_MAX_BUFFERS)
 			*buf_count = MFC_MAX_BUFFERS;
 
-		psize[0] = dec->src_buf_size;
+		/* psize used to min length in vb2 */
 		alloc_devs[0] = dev->device;
 	/* Video capture for decoding (destination)
 	 * this can be set after the header was parsed */
@@ -74,7 +72,7 @@ static int mfc_dec_queue_setup(struct vb2_queue *vq,
 			}
 		}
 	} else {
-		mfc_err_ctx("State seems invalid. State = %d, vq->type = %d\n",
+		mfc_ctx_err("State seems invalid. State = %d, vq->type = %d\n",
 							ctx->state, vq->type);
 		return -EINVAL;
 	}
@@ -118,10 +116,11 @@ static int mfc_dec_buf_init(struct vb2_buffer *vb)
 		ret = mfc_check_vb_with_fmt(ctx->dst_fmt, vb);
 		if (ret < 0)
 			return ret;
+
 		mfc_calc_base_addr(ctx, vb, ctx->dst_fmt);
 		if (call_cop(ctx, init_buf_ctrls, ctx, MFC_CTRL_TYPE_DST,
 					vb->index) < 0)
-			mfc_err_ctx("failed in init_buf_ctrls\n");
+			mfc_ctx_err("failed in init_buf_ctrls\n");
 	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = mfc_check_vb_with_fmt(ctx->src_fmt, vb);
 		if (ret < 0)
@@ -131,9 +130,9 @@ static int mfc_dec_buf_init(struct vb2_buffer *vb)
 
 		if (call_cop(ctx, init_buf_ctrls, ctx, MFC_CTRL_TYPE_SRC,
 					vb->index) < 0)
-			mfc_err_ctx("failed in init_buf_ctrls\n");
+			mfc_ctx_err("failed in init_buf_ctrls\n");
 	} else {
-		mfc_err_ctx("mfc_dec_buf_init: unknown queue type\n");
+		mfc_ctx_err("unknown queue type\n");
 		return -EINVAL;
 	}
 
@@ -160,7 +159,7 @@ static int mfc_dec_buf_prepare(struct vb2_buffer *vb)
 			mfc_debug(2, "[FRAME] single plane vb size: %lu, calc size: %d\n",
 					buf_size, raw->total_plane_size);
 			if (buf_size < raw->total_plane_size) {
-				mfc_err_ctx("[FRAME] single plane size(%lu) is smaller than (%d)\n",
+				mfc_ctx_err("[FRAME] single plane size(%lu) is smaller than (%d)\n",
 						buf_size, raw->total_plane_size);
 				return -EINVAL;
 			}
@@ -170,7 +169,7 @@ static int mfc_dec_buf_prepare(struct vb2_buffer *vb)
 				mfc_debug(2, "[FRAME] plane[%d] vb size: %lu, calc size: %d\n",
 						i, buf_size, raw->plane_size[i]);
 				if (buf_size < raw->plane_size[i]) {
-					mfc_err_ctx("[FRAME] plane[%d] size(%lu) is smaller than (%d)\n",
+					mfc_ctx_err("[FRAME] plane[%d] size(%lu) is smaller than (%d)\n",
 							i, buf_size, raw->plane_size[i]);
 					return -EINVAL;
 				}
@@ -178,17 +177,11 @@ static int mfc_dec_buf_prepare(struct vb2_buffer *vb)
 		}
 	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		buf_size = vb2_plane_size(vb, 0);
-		mfc_debug(2, "[STREAM] vb size: %lu, calc size: %d\n",
+		mfc_debug(2, "[STREAM] vb size: %lu, s_fmt sizeimage: %d\n",
 				buf_size, dec->src_buf_size);
 
-		if (buf_size < dec->src_buf_size) {
-			mfc_err_ctx("[STREAM] size(%lu) is smaller than (%d)\n",
-					buf_size, dec->src_buf_size);
-			return -EINVAL;
-		}
-
 		if (call_cop(ctx, to_buf_ctrls, ctx, &ctx->src_ctrls[index]) < 0)
-			mfc_err_ctx("failed in to_buf_ctrls\n");
+			mfc_ctx_err("failed in to_buf_ctrls\n");
 	}
 
 	return 0;
@@ -202,10 +195,10 @@ static void mfc_dec_buf_finish(struct vb2_buffer *vb)
 
 	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		if (call_cop(ctx, to_ctx_ctrls, ctx, &ctx->dst_ctrls[index]) < 0)
-			mfc_err_ctx("failed in to_ctx_ctrls\n");
+			mfc_ctx_err("failed in to_ctx_ctrls\n");
 	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		if (call_cop(ctx, to_ctx_ctrls, ctx, &ctx->src_ctrls[index]) < 0)
-			mfc_err_ctx("failed in to_ctx_ctrls\n");
+			mfc_ctx_err("failed in to_ctx_ctrls\n");
 	}
 }
 
@@ -220,13 +213,13 @@ static void mfc_dec_buf_cleanup(struct vb2_buffer *vb)
 	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		if (call_cop(ctx, cleanup_buf_ctrls, ctx,
 					MFC_CTRL_TYPE_DST, index) < 0)
-			mfc_err_ctx("failed in cleanup_buf_ctrls\n");
+			mfc_ctx_err("failed in cleanup_buf_ctrls\n");
 	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		if (call_cop(ctx, cleanup_buf_ctrls, ctx,
 					MFC_CTRL_TYPE_SRC, index) < 0)
-			mfc_err_ctx("failed in cleanup_buf_ctrls\n");
+			mfc_ctx_err("failed in cleanup_buf_ctrls\n");
 	} else {
-		mfc_err_ctx("mfc_dec_buf_cleanup: unknown queue type\n");
+		mfc_ctx_err("unknown queue type\n");
 	}
 
 	mfc_debug_leave();
@@ -236,8 +229,6 @@ static int mfc_dec_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct mfc_ctx *ctx = q->drv_priv;
 	struct mfc_dev *dev = ctx->dev;
-
-	mfc_update_real_time(ctx);
 
 	/* If context is ready then dev = work->data;schedule it to run */
 	mfc_ctx_ready_set_bit(ctx, &dev->work_bits);
@@ -263,14 +254,15 @@ static void __mfc_dec_src_stop_streaming(struct mfc_ctx *ctx)
 				prev_state = ctx->state;
 				mfc_change_state(ctx, MFCINST_SPECIAL_PARSING);
 				condition = MFC_REG_R2H_CMD_SEQ_DONE_RET;
-				mfc_info_ctx("try to special parsing! (before NAL_START)\n");
+				mfc_ctx_info("try to special parsing! (before NAL_START)\n");
 			} else if (need_to_special_parsing_nal(ctx)) {
 				prev_state = ctx->state;
 				mfc_change_state(ctx, MFCINST_SPECIAL_PARSING_NAL);
 				condition = MFC_REG_R2H_CMD_FRAME_DONE_RET;
-				mfc_info_ctx("try to special parsing! (after NAL_START)\n");
+				mfc_ctx_info("try to special parsing! (after NAL_START)\n");
 			} else {
-				mfc_info_ctx("can't parsing CSD!, state = %d\n", ctx->state);
+				mfc_ctx_info("can't parsing CSD!, state = %d\n",
+						ctx->state);
 			}
 
 			if (condition) {
@@ -278,16 +270,17 @@ static void __mfc_dec_src_stop_streaming(struct mfc_ctx *ctx)
 
 				ret = mfc_just_run(dev, ctx->num);
 				if (ret) {
-					mfc_err_ctx("Failed to run MFC\n");
+					mfc_ctx_err("Failed to run MFC\n");
 					mfc_change_state(ctx, prev_state);
 				} else {
 					if (mfc_wait_for_done_ctx(ctx, condition))
-						mfc_err_ctx("special parsing time out\n");
+						mfc_ctx_err("special parsing time out\n");
 				}
 			}
 		}
 
-		src_mb = mfc_get_del_buf(ctx, &ctx->src_buf_queue, MFC_BUF_NO_TOUCH_USED);
+		src_mb = mfc_get_del_buf(ctx, &ctx->src_buf_queue,
+				MFC_BUF_NO_TOUCH_USED);
 		if (!src_mb)
 			break;
 
@@ -300,9 +293,6 @@ static void __mfc_dec_src_stop_streaming(struct mfc_ctx *ctx)
 	ctx->check_dump = 0;
 
 	mfc_init_queue(&ctx->src_buf_queue);
-
-	if (meminfo_enable == 1)
-		mfc_meminfo_cleanup_inbuf_q(ctx);
 
 	while (index < MFC_MAX_BUFFERS) {
 		index = find_next_bit(&ctx->src_ctrls_avail,
@@ -347,7 +337,7 @@ static void __mfc_dec_dst_stop_streaming(struct mfc_ctx *ctx)
 	if (ctx->wait_state & WAIT_STOP) {
 		ctx->wait_state &= ~(WAIT_STOP);
 		mfc_debug(2, "clear WAIT_STOP %d\n", ctx->wait_state);
-		MFC_TRACE_CTX("** DEC clear WAIT_STOP(wait_state %d)\n", ctx->wait_state);
+		MFC_TRACE_CTX("** DEC clear WAIT_STOP %d\n", ctx->wait_state);
 	}
 }
 
@@ -358,14 +348,14 @@ static void mfc_dec_stop_streaming(struct vb2_queue *q)
 	int ret = 0;
 	int prev_state;
 
-	mfc_info_ctx("dec stop_streaming is called, hwlock : %d, type : %d\n",
+	mfc_ctx_info("dec stop_streaming is called, hwlock : %d, type : %d\n",
 				test_bit(ctx->num, &dev->hwlock.bits), q->type);
 	MFC_TRACE_CTX("** DEC streamoff(type:%d)\n", q->type);
 
 	/* If a H/W operation is in progress, wait for it complete */
 	ret = mfc_get_hwlock_ctx(ctx);
 	if (ret < 0) {
-		mfc_err_ctx("Failed to get hwlock\n");
+		mfc_ctx_err("Failed to get hwlock\n");
 		return;
 	}
 
@@ -377,23 +367,24 @@ static void mfc_dec_stop_streaming(struct vb2_queue *q)
 	if (ctx->state == MFCINST_FINISHING)
 		mfc_change_state(ctx, MFCINST_RUNNING);
 
-	if (q->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE && need_to_dpb_flush(ctx)
-			&& !ctx->dec_priv->inter_res_change) {
+	if (q->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
+			need_to_dpb_flush(ctx) &&
+			!ctx->dec_priv->inter_res_change) {
 		prev_state = ctx->state;
 		mfc_change_state(ctx, MFCINST_DPB_FLUSHING);
 		mfc_set_bit(ctx->num, &dev->work_bits);
 		mfc_clean_ctx_int_flags(ctx);
-		mfc_info_ctx("try to DPB flush\n");
+		mfc_ctx_info("try to DPB flush\n");
 		ret = mfc_just_run(dev, ctx->num);
 		if (ret) {
-			mfc_err_ctx("Failed to run MFC\n");
+			mfc_ctx_err("Failed to run MFC\n");
 			mfc_release_hwlock_ctx(ctx);
 			mfc_cleanup_work_bit_and_try_run(ctx);
 			return;
 		}
 
 		if (mfc_wait_for_done_ctx(ctx, MFC_REG_R2H_CMD_DPB_FLUSH_RET)) {
-			mfc_err_ctx("time out during DPB flush\n");
+			mfc_ctx_err("time out during DPB flush\n");
 			dev->logging_data->cause |= (1 << MFC_CAUSE_FAIL_DPB_FLUSH);
 			call_dop(dev, dump_and_stop_always, dev);
 		}
@@ -435,10 +426,8 @@ static void mfc_dec_buf_queue(struct vb2_buffer *vb)
 		mfc_add_tail_buf(ctx, &ctx->src_buf_queue, buf);
 
 		if (debug_ts == 1)
-			mfc_info_ctx("[TS] framerate: %ld, timestamp: %lld\n",
+			mfc_ctx_info("[TS] framerate: %ld, timestamp: %lld\n",
 					ctx->framerate, buf->vb.vb2_buf.timestamp);
-		if (meminfo_enable == 1)
-			mfc_meminfo_add_inbuf(ctx, vb);
 
 		MFC_TRACE_CTX("Q src[%d] fd: %d, %#llx\n",
 				vb->index, vb->planes[0].m.fd, buf->addr[0][0]);
@@ -453,11 +442,11 @@ static void mfc_dec_buf_queue(struct vb2_buffer *vb)
 					&ctx->dst_buf_queue, dec->total_dpb_count))
 			ctx->capture_state = QUEUE_BUFS_MMAPED;
 
-		MFC_TRACE_CTX("Q dst[%d][%d] fd: %d, %#llx / avail %#lx used %#lx\n",
-				vb->index, buf->dpb_index, vb->planes[0].m.fd, buf->addr[0][0],
-				dec->available_dpb, dec->dynamic_used);
+		MFC_TRACE_CTX("Q dst[%d][%d] fd: %d, %#llx / used %#lx\n",
+				vb->index, buf->dpb_index, vb->planes[0].m.fd,
+				buf->addr[0][0], dec->dynamic_used);
 	} else {
-		mfc_err_ctx("Unsupported buffer type (%d)\n", vq->type);
+		mfc_ctx_err("Unsupported buffer type (%d)\n", vq->type);
 	}
 
 	if (mfc_ctx_ready_set_bit(ctx, &dev->work_bits))

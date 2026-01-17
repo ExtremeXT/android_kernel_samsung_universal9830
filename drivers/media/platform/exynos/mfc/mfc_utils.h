@@ -59,7 +59,7 @@ static inline enum mfc_node_type mfc_get_node_type(struct file *file)
 	}
 	dev = video_drvdata(file);
 
-	mfc_debug_dev(2, "video_device index: %d\n", vdev->index);
+	mfc_dev_debug(2, "video_device index: %d\n", vdev->index);
 
 	switch (vdev->index) {
 	case 0:
@@ -135,7 +135,8 @@ int mfc_check_vb_with_fmt(struct mfc_fmt *fmt, struct vb2_buffer *vb);
 void mfc_set_linear_stride_size(struct mfc_ctx *ctx, struct mfc_fmt *fmt);
 void mfc_dec_calc_dpb_size(struct mfc_ctx *ctx);
 void mfc_enc_calc_src_size(struct mfc_ctx *ctx);
-void mfc_calc_base_addr(struct mfc_ctx *ctx, struct vb2_buffer *vb, struct mfc_fmt *fmt);
+void mfc_calc_base_addr(struct mfc_ctx *ctx, struct vb2_buffer *vb,
+					struct mfc_fmt *fmt);
 
 static inline int mfc_dec_status_decoding(unsigned int dst_frame_status)
 {
@@ -171,7 +172,7 @@ void mfc_idle_checker(struct timer_list *t);
 static inline void mfc_idle_checker_start_tick(struct mfc_dev *dev)
 {
 	mod_timer(&dev->mfc_idle_timer, jiffies +
-		msecs_to_jiffies(MFCIDLE_TICK_INTERVAL));
+			msecs_to_jiffies(MFCIDLE_TICK_INTERVAL));
 	atomic_set(&dev->hw_run_cnt, 0);
 	atomic_set(&dev->queued_cnt, 0);
 }
@@ -186,23 +187,4 @@ static inline void mfc_change_idle_mode(struct mfc_dev *dev,
 		mfc_idle_checker_start_tick(dev);
 }
 
-static inline int mfc_enc_get_ts_delta(struct mfc_ctx *ctx)
-{
-	struct mfc_enc *enc = ctx->enc_priv;
-	struct mfc_enc_params *p = &enc->params;
-	int ts_delta = 0;
-
-	if (!ctx->ts_last_interval) {
-		ts_delta = p->rc_framerate_res / p->rc_framerate;
-		mfc_debug(3, "[DFR] default delta: %d\n", ts_delta);
-	} else {
-		if (IS_H263_ENC(ctx))
-			ts_delta = (ctx->ts_last_interval / 100) / p->rc_framerate_res;
-		else
-			ts_delta = ctx->ts_last_interval / p->rc_framerate_res;
-	}
-	return ts_delta;
-}
-
-void mfc_update_real_time(struct mfc_ctx *ctx);
 #endif /* __MFC_UTILS_H */

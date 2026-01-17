@@ -18,42 +18,7 @@
 #define CBR_FIX_MAX			10
 #define CBR_I_LIMIT_MAX			5
 #define BPG_EXTENSION_TAG_SIZE		5
-
-static int mfc_primaries_to_rgb_format_ctrl[][2] = {
-	{ MFC_COLORSPACE_UNSPECIFICED,	1}, /* Unknown */
-	{ MFC_COLORSPACE_BT601,		0}, /* Rec. ITU-R BT.601-7 */
-	{ MFC_COLORSPACE_BT709,		1}, /* Rec. ITU-R BT.709-6 */
-	{ MFC_COLORSPACE_SMPTE_170,	0}, /* SMPTE-170 */
-	{ MFC_COLORSPACE_SMPTE_240,	0}, /* SMPTE-240 */
-	{ MFC_COLORSPACE_BT2020,	1}, /* Rec. ITU-R BT.2020-2 */
-	{ MFC_COLORSPACE_RESERVED,	1}, /* Reserved */
-	{ MFC_COLORSPACE_SRGB,		1}, /* sRGB (IEC 61966-2-1) */
-	{ MFC_COLORSPACE_UNSPECIFICED,	1}, /* Unknown */
-	{ MFC_COLORSPACE_UNSPECIFICED,	1}, /* Unknown */
-	{ MFC_COLORSPACE_UNSPECIFICED,	1}, /* Unknown */
-};
-
-static int mfc_transfer_to_rgb_format_ctrl[][2] = {
-	{ MFC_TRANSFER_RESERVED,	1},
-	{ MFC_TRANSFER_BT709,		1},
-	{ MFC_TRANSFER_UNSPECIFIED,	1},
-	{ MFC_TRANSFER_RESERVED,	1},
-	{ MFC_TRANSFER_GAMMA_22,	1},
-	{ MFC_TRANSFER_GAMMA_28,	1},
-	{ MFC_TRANSFER_SMPTE_170M,	0},
-	{ MFC_TRANSFER_SMPTE_240M,	1},
-	{ MFC_TRANSFER_LINEAR,		1},
-	{ MFC_TRANSFER_LOGARITHMIC,	1},
-	{ MFC_TRANSFER_LOGARITHMIC_S,	1},
-	{ MFC_TRANSFER_XvYCC,		1},
-	{ MFC_TRANSFER_BT1361,		1},
-	{ MFC_TRANSFER_SRGB,		1},
-	{ MFC_TRANSFER_BT2020_1,	1},
-	{ MFC_TRANSFER_BT2020_2,	1},
-	{ MFC_TRANSFER_ST2084,		1},
-	{ MFC_TRANSFER_ST428,		1},
-	{ MFC_TRANSFER_HLG,		1},
-};
+#define TRANSFER_SMPTE_170M		6
 
 void mfc_set_slice_mode(struct mfc_ctx *ctx)
 {
@@ -75,7 +40,7 @@ void mfc_set_slice_mode(struct mfc_ctx *ctx)
 			(enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB_ROW)) {
 		MFC_RAW_WRITEL(enc->slice_size_mb, MFC_REG_E_MSLICE_SIZE_MB);
 	} else if ((enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES) ||
-			(enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_FIXED_BYTES)){
+			(enc->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_FIXED_BYTES)) {
 		MFC_RAW_WRITEL(enc->slice_size_bits, MFC_REG_E_MSLICE_SIZE_BITS);
 	} else {
 		MFC_RAW_WRITEL(0x0, MFC_REG_E_MSLICE_SIZE_MB);
@@ -98,29 +63,6 @@ void mfc_set_aso_slice_order_h264(struct mfc_ctx *ctx)
 	}
 }
 
-void mfc_set_enc_ts_delta(struct mfc_ctx *ctx)
-{
-	struct mfc_dev *dev = ctx->dev;
-	struct mfc_enc *enc = ctx->enc_priv;
-	struct mfc_enc_params *p = &enc->params;
-	unsigned int reg = 0;
-	int ts_delta;
-
-	ts_delta = mfc_enc_get_ts_delta(ctx);
-
-	reg = MFC_RAW_READL(MFC_REG_E_TIME_STAMP_DELTA);
-	reg &= ~(0xFFFF);
-	reg |= (ts_delta & 0xFFFF);
-	MFC_RAW_WRITEL(reg, MFC_REG_E_TIME_STAMP_DELTA);
-	if (ctx->ts_last_interval)
-		mfc_debug(3, "[DFR] fps %d -> %ld, delta: %d, reg: %#x\n",
-				p->rc_framerate, USEC_PER_SEC / ctx->ts_last_interval,
-				ts_delta, reg);
-	else
-		mfc_debug(3, "[DFR] fps %d -> 0, delta: %d, reg: %#x\n",
-				p->rc_framerate, ts_delta, reg);
-}
-
 static void __mfc_set_gop_size(struct mfc_ctx *ctx, int ctrl_mode)
 {
 	struct mfc_dev *dev = ctx->dev;
@@ -132,7 +74,7 @@ static void __mfc_set_gop_size(struct mfc_ctx *ctx, int ctrl_mode)
 		p->i_frm_ctrl_mode = 1;
 		p->i_frm_ctrl = p->gop_size * (p->num_b_frame + 1);
 		if (p->i_frm_ctrl >= 0x3FFFFFFF) {
-			mfc_info_ctx("I frame interval is bigger than max: %d\n",
+			mfc_ctx_info("I frame interval is bigger than max: %d\n",
 					p->i_frm_ctrl);
 			p->i_frm_ctrl = 0x3FFFFFFF;
 		}
@@ -166,7 +108,7 @@ static void __mfc_set_default_params(struct mfc_ctx *ctx)
 	mfc_debug(2, "Set default param -  enc_param_num: %d\n", dev->pdata->enc_param_num);
 	for (i = 0; i < dev->pdata->enc_param_num; i++) {
 		if (i >= MFC_MAX_DEFAULT_PARAM) {
-			mfc_err_ctx("enc_param_num(%d) is over max number(%d)\n",
+			mfc_ctx_err("enc_param_num(%d) is over max number(%d)\n",
 					dev->pdata->enc_param_num, MFC_MAX_DEFAULT_PARAM);
 			break;
 		}
@@ -189,40 +131,6 @@ static void __mfc_init_regs(struct mfc_ctx *ctx)
 	MFC_RAW_WRITEL(0x0, MFC_REG_E_METADATA_BUFFER_SIZE);
 }
 
-static int __mfc_get_rgb_format_ctrl(struct mfc_ctx *ctx, struct mfc_enc_params *p)
-{
-	int ret = 0;
-
-	/*
-	 * User set color VUI information as below regardless of the color format.
-	 * ---------------------------------------------
-	 *	    VP9		 |	others
-	 * ----------------------|----------------------
-	 *   color space only	 | primaries, transfer
-	 * (primaries interface) |	,matrix
-	 * ---------------------------------------------
-	 * However, in case of RGB encoding, the F/W need to know
-	 * which to use RGB pixel format transform characteristic.
-	 * So, driver converts it based on the user's VUI information.
-	 * Return value
-	 *  0: ITU-R BT.601
-	 *  1: ITU-R BT.709
-	 */
-
-	if (IS_VP9_ENC(ctx)) {
-		ret = mfc_primaries_to_rgb_format_ctrl[p->colour_primaries][1];
-		mfc_debug(2, "[RGB] VP9 color space %d converts to RGB format ctrl %s\n",
-				p->colour_primaries, ret ? "BT.709" : "BT.601");
-
-	} else {
-		ret = mfc_transfer_to_rgb_format_ctrl[p->transfer_characteristics][1];
-		mfc_debug(2, "[RGB] transfer %d converts to RGB format ctrl %s\n",
-				p->transfer_characteristics, ret ? "BT.709" : "BT.601");
-	}
-
-	return ret;
-}
-
 static void __mfc_set_enc_params(struct mfc_ctx *ctx)
 {
 	struct mfc_dev *dev = ctx->dev;
@@ -235,6 +143,8 @@ static void __mfc_set_enc_params(struct mfc_ctx *ctx)
 	__mfc_init_regs(ctx);
 	__mfc_set_default_params(ctx);
 
+	if (ctx->is_afbc)
+		MFC_RAW_WRITEL(ctx->img_width, MFC_REG_E_FRAME_WIDTH);
 	/* width */
 	MFC_RAW_WRITEL(ctx->crop_width, MFC_REG_E_CROPPED_FRAME_WIDTH);
 	/* height */
@@ -253,7 +163,7 @@ static void __mfc_set_enc_params(struct mfc_ctx *ctx)
 	if (p->slice_mode == V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB) {
 		enc->slice_size_mb = p->slice_mb;
 	} else if ((p->slice_mode == V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES) ||
-			(p->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_FIXED_BYTES)){
+			(p->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_FIXED_BYTES)) {
 		enc->slice_size_bits = p->slice_bit;
 	} else if (p->slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB_ROW) {
 		enc->slice_size_mb = p->slice_mb_row * ((ctx->crop_width + 15) / 16);
@@ -306,10 +216,11 @@ static void __mfc_set_enc_params(struct mfc_ctx *ctx)
 	if (ctx->src_fmt->type & MFC_FMT_RGB) {
 		reg = MFC_RAW_READL(MFC_REG_PIXEL_FORMAT);
 		mfc_clear_set_bits(reg, 0x1, 8, p->color_range);
-		mfc_clear_set_bits(reg, 0x3, 6, __mfc_get_rgb_format_ctrl(ctx, p));
-		mfc_debug(2, "[RGB] enc color_range %d, primaries %d, transfer %d\n",
-				p->color_range, p->colour_primaries,
-				p->transfer_characteristics);
+		mfc_clear_bits(reg, 0x3, 6);
+		if (p->transfer_characteristics != TRANSFER_SMPTE_170M)
+			mfc_set_bits(reg, 0x3, 6, 0x1);
+		mfc_debug(2, "[RGB] enc color_range %d, transfer %d\n",
+				p->color_range, p->transfer_characteristics);
 		MFC_RAW_WRITEL(reg, MFC_REG_PIXEL_FORMAT);
 	}
 
@@ -336,8 +247,6 @@ static void __mfc_set_enc_params(struct mfc_ctx *ctx)
 	mfc_clear_set_bits(reg, 0x1, 9, p->rc_frame);
 	/* drop control */
 	mfc_clear_set_bits(reg, 0x1, 10, p->drop_control);
-	if (MFC_FEATURE_SUPPORT(dev, dev->pdata->enc_ts_delta))
-		mfc_clear_set_bits(reg, 0x1, 20, 1);
 	MFC_RAW_WRITEL(reg, MFC_REG_E_RC_CONFIG);
 
 	/*
@@ -422,7 +331,7 @@ static void __mfc_set_temporal_svc_h264(struct mfc_ctx *ctx, struct mfc_h264_enc
 		mfc_set_bits(reg, 0x7, 4, p->num_hier_max_layer);
 	} else {
 		mfc_clear_bits(reg, 0x1, 7);
-		mfc_set_bits(reg, 0x7, 4, p_264->num_hier_layer);
+		mfc_set_bits(reg, 0x7, 4, 0x7);
 	}
 	mfc_clear_set_bits(reg, 0x1, 8, p->hier_bitrate_ctrl);
 	MFC_RAW_WRITEL(reg, MFC_REG_E_NUM_T_LAYER);
@@ -485,7 +394,7 @@ static void __mfc_set_fmo_slice_map_h264(struct mfc_ctx *ctx, struct mfc_h264_en
 			MFC_RAW_WRITEL(p_264->fmo_sg_rate, MFC_REG_E_H264_FMO_SLICE_GRP_CHANGE_RATE_MINUS1);
 			break;
 		default:
-			mfc_err_ctx("Unsupported map type for FMO: %d\n",
+			mfc_ctx_err("Unsupported map type for FMO: %d\n",
 					p_264->fmo_slice_map_type);
 			p_264->fmo_slice_map_type = 0;
 			p_264->fmo_slice_num_grp = 1;
@@ -525,15 +434,15 @@ static void __mfc_set_enc_params_h264(struct mfc_ctx *ctx)
 	/* Level 6.0 case */
 	if (IS_LV60_MB(mb)) {
 		if (p_264->level < 60) {
-			mfc_info_ctx("Set Level 6.0 for MB %d\n", mb);
+			mfc_ctx_info("Set Level 6.0 for MB %d\n", mb);
 			p_264->level = 60;
 		}
 		if (p_264->profile < 0x1) {
-			mfc_info_ctx("Set High profile for MB %d\n", mb);
+			mfc_ctx_info("Set High profile for MB %d\n", mb);
 			p_264->profile = 0x2;
 		}
 		if (p_264->entropy_mode != 0x1) {
-			mfc_info_ctx("Set Entropy mode CABAC\n");
+			mfc_ctx_info("Set Entropy mode CABAC\n");
 			p_264->entropy_mode = 1;
 		}
 	}
@@ -541,11 +450,11 @@ static void __mfc_set_enc_params_h264(struct mfc_ctx *ctx)
 	/* Level 5.1 case */
 	if (IS_LV51_MB(mb)) {
 		if (p_264->level < 51) {
-			mfc_info_ctx("Set Level 5.1 for MB %d\n", mb);
+			mfc_ctx_info("Set Level 5.1 for MB %d\n", mb);
 			p_264->level = 51;
 		}
 		if (p_264->profile < 0x1) {
-			mfc_info_ctx("Set High profile for MB %d\n", mb);
+			mfc_ctx_info("Set High profile for MB %d\n", mb);
 			p_264->profile = 0x2;
 		}
 	}
@@ -649,12 +558,6 @@ static void __mfc_set_enc_params_h264(struct mfc_ctx *ctx)
 	mfc_clear_set_bits(reg, 0xFF, 0, p_264->rc_frame_qp);
 	MFC_RAW_WRITEL(reg, MFC_REG_E_FIXED_PICTURE_QP);
 
-	/* chroma QP offset  */
-	reg = MFC_RAW_READL(MFC_REG_E_H264_CHROMA_QP_OFFSET);
-	mfc_clear_set_bits(reg, 0x1F, 5, p->chroma_qp_offset_cr);
-	mfc_clear_set_bits(reg, 0x1F, 0, p->chroma_qp_offset_cb);
-	MFC_RAW_WRITEL(reg, MFC_REG_E_H264_CHROMA_QP_OFFSET);
-
 	MFC_RAW_WRITEL(0x0, MFC_REG_E_ASPECT_RATIO);
 	MFC_RAW_WRITEL(0x0, MFC_REG_E_EXTENDED_SAR);
 	if (p_264->ar_vui) {
@@ -696,14 +599,15 @@ static void __mfc_set_enc_params_h264(struct mfc_ctx *ctx)
 		MFC_RAW_WRITEL(reg, MFC_REG_E_H264_FRAME_PACKING_SEI_INFO);
 	}
 
-	/* Video signal type */
+	/* Video Signal Type */
 	reg = 0;
 	if (ctx->src_fmt->type & MFC_FMT_RGB) {
 		/* VIDEO_SIGNAL_TYPE_FLAG */
 		mfc_set_bits(reg, 0x1, 31, 0x1);
 		/* COLOUR_DESCRIPTION_PRESENT_FLAG */
 		mfc_set_bits(reg, 0x1, 24, 0x1);
-	} else if (MFC_FEATURE_SUPPORT(dev, dev->pdata->color_aspect_enc) && p->check_color_range) {
+	} else if (MFC_FEATURE_SUPPORT(dev, dev->pdata->color_aspect_enc)
+			&& p->check_color_range) {
 		/* VIDEO_SIGNAL_TYPE_FLAG */
 		mfc_set_bits(reg, 0x1, 31, 0x1);
 		/* COLOR_RANGE */
@@ -882,7 +786,7 @@ static void __mfc_set_enc_params_vp8(struct mfc_ctx *ctx)
 	/* vp8 partition is possible as below value: 1/2/4/8 */
 	if (p_vp8->vp8_numberofpartitions & 0x1) {
 		if (p_vp8->vp8_numberofpartitions > 1)
-			mfc_err_ctx("partition should be even num (%d)\n",
+			mfc_ctx_err("partition should be even num (%d)\n",
 					p_vp8->vp8_numberofpartitions);
 		p_vp8->vp8_numberofpartitions = (p_vp8->vp8_numberofpartitions & ~0x1);
 	}
@@ -966,28 +870,28 @@ static void __mfc_enc_check_vp9_profile(struct mfc_ctx *ctx)
 	if (!ctx->is_422 && !ctx->is_10bit) {
 		/* YUV420 8bit format */
 		if (p_vp9->profile != MFC_REG_E_PROFILE_VP9_PROFILE0) {
-			mfc_err_ctx("4:2:0 format is not matched with profile(%d)\n",
+			mfc_ctx_err("4:2:0 format is not matched with profile(%d)\n",
 						p_vp9->profile);
 			p_vp9->profile = MFC_REG_E_PROFILE_VP9_PROFILE0;
 		}
 	} else if (ctx->is_422 && !ctx->is_10bit) {
 		/* YUV422 8bit format */
 		if (p_vp9->profile != MFC_REG_E_PROFILE_VP9_PROFILE1) {
-			mfc_err_ctx("4:2:2 format is not matched with profile(%d)\n",
+			mfc_ctx_err("4:2:2 format is not matched with profile(%d)\n",
 						p_vp9->profile);
 			p_vp9->profile = MFC_REG_E_PROFILE_VP9_PROFILE1;
 		}
 	} else if (!ctx->is_422 && ctx->is_10bit) {
 		/* YUV420 10bit format */
 		if (p_vp9->profile != MFC_REG_E_PROFILE_VP9_PROFILE2) {
-			mfc_err_ctx("4:2:0 10bit format is not matched with profile(%d)\n",
+			mfc_ctx_err("4:2:0 10bit format is not matched with profile(%d)\n",
 						p_vp9->profile);
 			p_vp9->profile = MFC_REG_E_PROFILE_VP9_PROFILE2;
 		}
 	} else if (ctx->is_422 && ctx->is_10bit) {
 		/* YUV422 10bit format */
 		if (p_vp9->profile != MFC_REG_E_PROFILE_VP9_PROFILE3) {
-			mfc_err_ctx("4:2:2 10bit format is not matched with profile(%d)\n",
+			mfc_ctx_err("4:2:2 10bit format is not matched with profile(%d)\n",
 						p_vp9->profile);
 			p_vp9->profile = MFC_REG_E_PROFILE_VP9_PROFILE3;
 		}
@@ -1095,12 +999,13 @@ static void __mfc_set_enc_params_vp9(struct mfc_ctx *ctx)
 	mfc_clear_set_bits(reg, 0xFF, 0, p_vp9->rc_min_qp_p);
 	MFC_RAW_WRITEL(reg, MFC_REG_E_RC_QP_BOUND_PB);
 
-	/* Video signal type */
+	/* Video Signal Type */
 	reg = 0;
 	if (ctx->src_fmt->type & MFC_FMT_RGB) {
 		/* VIDEO_SIGNAL_TYPE_FLAG */
 		mfc_set_bits(reg, 0x1, 31, 0x1);
-	} else if (MFC_FEATURE_SUPPORT(dev, dev->pdata->color_aspect_enc) && p->check_color_range) {
+	} else if (MFC_FEATURE_SUPPORT(dev, dev->pdata->color_aspect_enc)
+			&& p->check_color_range) {
 		/* VIDEO_SIGNAL_TYPE_FLAG */
 		mfc_set_bits(reg, 0x1, 31, 0x1);
 		/* COLOR_SPACE: VP9 uses colour_primaries interface for color space */
@@ -1124,31 +1029,31 @@ static void __mfc_enc_check_hevc_profile(struct mfc_ctx *ctx)
 	if (!ctx->is_422 && !ctx->is_10bit) {
 		/* YUV420 8bit format */
 		if ((p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN) &&
-				(p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_10)) {
-			mfc_err_ctx("4:2:0 format is not matched with profile(%d)\n",
+			(p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_10)) {
+			mfc_ctx_err("4:2:0 format is not matched with profile(%d)\n",
 						p_hevc->profile);
 			p_hevc->profile = MFC_REG_E_PROFILE_HEVC_MAIN;
 		}
 	} else if (ctx->is_422 && !ctx->is_10bit) {
 		/* YUV422 8bit format */
-		if ((p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10_INTRA) &&
-				p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10) {
-			mfc_err_ctx("4:2:2 format is not matched with profile(%d)\n",
+		if ((p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10) &&
+		(p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10_INTRA)) {
+			mfc_ctx_err("4:2:2 format is not matched with profile(%d)\n",
 						p_hevc->profile);
 			p_hevc->profile = MFC_REG_E_PROFILE_HEVC_MAIN_422_10;
 		}
 	} else if (!ctx->is_422 && ctx->is_10bit) {
 		/* YUV420 10bit format */
 		if (p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_10) {
-			mfc_err_ctx("4:2:0 10bit format is not matched with profile(%d)\n",
+			mfc_ctx_err("4:2:0 10bit format is not matched with profile(%d)\n",
 						p_hevc->profile);
 			p_hevc->profile = MFC_REG_E_PROFILE_HEVC_MAIN_10;
 		}
 	} else if (ctx->is_422 && ctx->is_10bit) {
 		/* YUV422 10bit format */
-		if ((p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10_INTRA) &&
-				(p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10)) {
-			mfc_err_ctx("4:2:2 10bit format is not matched with profile(%d)\n",
+		if ((p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10) &&
+		(p_hevc->profile != MFC_REG_E_PROFILE_HEVC_MAIN_422_10_INTRA)) {
+			mfc_ctx_err("4:2:2 10bit format is not matched with profile(%d)\n",
 						p_hevc->profile);
 			p_hevc->profile = MFC_REG_E_PROFILE_HEVC_MAIN_422_10;
 		}
@@ -1182,13 +1087,13 @@ static void __mfc_set_enc_params_hevc(struct mfc_ctx *ctx)
 	mb = WIDTH_MB((ctx)->crop_width) * HEIGHT_MB((ctx)->crop_height);
 	/* Level 6.0 case */
 	if (IS_LV60_MB(mb) && p_hevc->level < 60) {
-		mfc_info_ctx("Set Level 6.0 for MB %d\n", mb);
+		mfc_ctx_info("Set Level 6.0 for MB %d\n", mb);
 		p_hevc->level = 60;
 	}
 
 	/* Level 5.1 case */
 	if (IS_LV51_MB(mb) && p_hevc->level < 51) {
-		mfc_info_ctx("Set Level 5.1 for MB %d\n", mb);
+		mfc_ctx_info("Set Level 5.1 for MB %d\n", mb);
 		p_hevc->level = 51;
 	}
 
@@ -1267,7 +1172,7 @@ static void __mfc_set_enc_params_hevc(struct mfc_ctx *ctx)
 		mfc_set_bits(reg, 0x7, 4, p->num_hier_max_layer);
 	} else {
 		mfc_clear_bits(reg, 0x1, 7);
-		mfc_set_bits(reg, 0x7, 4, p_hevc->num_hier_layer);
+		mfc_set_bits(reg, 0x7, 4, 0x7);
 	}
 	mfc_clear_set_bits(reg, 0x1, 8, p->hier_bitrate_ctrl);
 	MFC_RAW_WRITEL(reg, MFC_REG_E_NUM_T_LAYER);
@@ -1320,26 +1225,21 @@ static void __mfc_set_enc_params_hevc(struct mfc_ctx *ctx)
 	mfc_clear_set_bits(reg, 0xFF, 0, p_hevc->rc_frame_qp);
 	MFC_RAW_WRITEL(reg, MFC_REG_E_FIXED_PICTURE_QP);
 
-	/* chroma QP offset  */
-	reg = MFC_RAW_READL(MFC_REG_E_HEVC_CHROMA_QP_OFFSET);
-	mfc_clear_set_bits(reg, 0x1F, 5, p->chroma_qp_offset_cr);
-	mfc_clear_set_bits(reg, 0x1F, 0, p->chroma_qp_offset_cb);
-	MFC_RAW_WRITEL(reg, MFC_REG_E_HEVC_CHROMA_QP_OFFSET);
-
 	/* ROI enable: it must set on SEQ_START only for HEVC encoder */
 	reg = MFC_RAW_READL(MFC_REG_E_RC_ROI_CTRL);
 	mfc_clear_set_bits(reg, 0x1, 0, p->roi_enable);
 	MFC_RAW_WRITEL(reg, MFC_REG_E_RC_ROI_CTRL);
 	mfc_debug(3, "[ROI] HEVC ROI enable\n");
 
-	/* Video signal type */
+	/* Video Signal Type */
 	reg = 0;
 	if (ctx->src_fmt->type & MFC_FMT_RGB) {
 		/* VIDEO_SIGNAL_TYPE_FLAG */
 		mfc_set_bits(reg, 0x1, 31, 0x1);
 		/* COLOUR_DESCRIPTION_PRESENT_FLAG */
 		mfc_set_bits(reg, 0x1, 24, 0x1);
-	} else if (MFC_FEATURE_SUPPORT(dev, dev->pdata->color_aspect_enc) && p->check_color_range) {
+	} else if (MFC_FEATURE_SUPPORT(dev, dev->pdata->color_aspect_enc)
+			&& p->check_color_range) {
 		/* VIDEO_SIGNAL_TYPE_FLAG */
 		mfc_set_bits(reg, 0x1, 31, 0x1);
 		/* COLOR_RANGE */
@@ -1449,7 +1349,7 @@ int mfc_set_enc_params(struct mfc_ctx *ctx)
 	else if (IS_BPG_ENC(ctx))
 		__mfc_set_enc_params_bpg(ctx);
 	else {
-		mfc_err_ctx("Unknown codec for encoding (%x)\n",
+		mfc_ctx_err("Unknown codec for encoding (%x)\n",
 			ctx->codec_mode);
 		return -EINVAL;
 	}
@@ -1465,27 +1365,26 @@ int mfc_set_enc_params(struct mfc_ctx *ctx)
 
 void mfc_set_test_params(struct mfc_dev *dev)
 {
-	unsigned int base_addr = 0xF000;
+	unsigned int base = 0xF000;
 	unsigned int i;
 
 	if (!dev->reg_val) {
-		mfc_err_dev("[REGTEST] There is no reg_val set the register value\n");
+		mfc_dev_err("[REGTEST] There is no reg_val set the register value\n");
 		return;
 	}
 
-	mfc_info_dev("[REGTEST] Overwrite register value for encoder register test\n");
+	mfc_dev_info("[REGTEST] Overwrite register value for encoder register test\n");
 
 	for (i = 0; i < dev->reg_cnt; i++)
-		if (((base_addr + (i * 4)) != MFC_REG_E_STREAM_BUFFER_ADDR) &&
-				((base_addr + (i * 4)) != MFC_REG_E_SOURCE_FIRST_STRIDE) &&
-				((base_addr + (i * 4)) != MFC_REG_E_SOURCE_SECOND_STRIDE) &&
-				((base_addr + (i * 4)) != MFC_REG_E_SOURCE_THIRD_STRIDE) &&
-				((base_addr + (i * 4)) != MFC_REG_E_SOURCE_FIRST_2BIT_ADDR) &&
-				((base_addr + (i * 4)) != MFC_REG_E_SOURCE_SECOND_2BIT_ADDR) &&
-				((base_addr + (i * 4)) != MFC_REG_E_SOURCE_FIRST_2BIT_STRIDE) &&
-				((base_addr + (i * 4)) != MFC_REG_E_SOURCE_SECOND_2BIT_STRIDE) &&
-				((base_addr + (i * 4)) != MFC_REG_FIRMWARE_STATUS_INFO) &&
-				((base_addr + (i * 4)) != MFC_REG_PIXEL_FORMAT))
-			MFC_RAW_WRITEL(dev->reg_val[i], base_addr + (i * 4));
-
+		if (((base + (i * 4)) != MFC_REG_E_STREAM_BUFFER_ADDR) &&
+		((base + (i * 4)) != MFC_REG_E_SOURCE_FIRST_STRIDE) &&
+		((base + (i * 4)) != MFC_REG_E_SOURCE_SECOND_STRIDE) &&
+		((base + (i * 4)) != MFC_REG_E_SOURCE_THIRD_STRIDE) &&
+		((base + (i * 4)) != MFC_REG_E_SOURCE_FIRST_2BIT_ADDR) &&
+		((base + (i * 4)) != MFC_REG_E_SOURCE_SECOND_2BIT_ADDR) &&
+		((base + (i * 4)) != MFC_REG_E_SOURCE_FIRST_2BIT_STRIDE) &&
+		((base + (i * 4)) != MFC_REG_E_SOURCE_SECOND_2BIT_STRIDE) &&
+		((base + (i * 4)) != MFC_REG_FIRMWARE_STATUS_INFO) &&
+		((base + (i * 4)) != MFC_REG_PIXEL_FORMAT))
+			MFC_RAW_WRITEL(dev->reg_val[i], base + (i * 4));
 }

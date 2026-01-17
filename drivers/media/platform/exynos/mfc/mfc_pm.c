@@ -59,7 +59,7 @@ int mfc_pm_clock_on(struct mfc_dev *dev)
 		dev->pm.clock_on_steps |= 0x1 << 2;
 		ret = mfc_wait_pending(dev);
 		if (ret != 0) {
-			mfc_err_dev("pending wait failed (%d)\n", ret);
+			mfc_dev_err("pending wait failed (%d)\n", ret);
 			call_dop(dev, dump_and_stop_debug_mode, dev);
 			return ret;
 		}
@@ -73,17 +73,17 @@ int mfc_pm_clock_on(struct mfc_dev *dev)
 		unsigned long flags;
 
 		spin_lock_irqsave(&dev->pm.clklock, flags);
-		mfc_debug_dev(3, "Begin: enable protection\n");
+		mfc_dev_debug(3, "Begin: enable protection\n");
 		ret = exynos_smc(SMC_PROTECTION_SET, 0,
 					dev->id, SMC_PROTECTION_ENABLE);
 		dev->pm.clock_on_steps |= 0x1 << 5;
 		if (ret != DRMDRV_OK) {
-			mfc_err_dev("Protection Enable failed! ret(%u)\n", ret);
+			mfc_dev_err("Protection Enable failed! ret(%u)\n", ret);
 			call_dop(dev, dump_and_stop_debug_mode, dev);
 			spin_unlock_irqrestore(&dev->pm.clklock, flags);
 			return -EACCES;
 		}
-		mfc_debug_dev(3, "End: enable protection\n");
+		mfc_dev_debug(3, "End: enable protection\n");
 		spin_unlock_irqrestore(&dev->pm.clklock, flags);
 	}
 #endif
@@ -91,7 +91,7 @@ int mfc_pm_clock_on(struct mfc_dev *dev)
 	dev->pm.clock_on_steps |= 0x1 << 6;
 	ret = clk_enable(dev->pm.clock);
 	if (ret < 0) {
-		mfc_err_dev("clk_enable failed (%d)\n", ret);
+		mfc_dev_err("clk_enable failed (%d)\n", ret);
 		call_dop(dev, dump_and_stop_debug_mode, dev);
 		return ret;
 	}
@@ -101,7 +101,7 @@ int mfc_pm_clock_on(struct mfc_dev *dev)
 
 	dev->pm.clock_on_steps |= 0x1 << 8;
 	state = atomic_read(&dev->clk_ref);
-	mfc_debug_dev(2, "+ %d\n", state);
+	mfc_dev_debug(2, "+ %d\n", state);
 	MFC_TRACE_DEV("** clock_on end: ref(%d) step(%#x)\n", state, dev->pm.clock_on_steps);
 	MFC_TRACE_LOG_DEV("c+%d", state);
 
@@ -131,7 +131,7 @@ void mfc_pm_clock_off(struct mfc_dev *dev)
 	state = atomic_read(&dev->clk_ref);
 	MFC_TRACE_DEV("** clock_off start: ref state(%d)\n", state);
 	if (state < 0) {
-		mfc_err_dev("Clock state is wrong(%d)\n", state);
+		mfc_dev_err("Clock state is wrong(%d)\n", state);
 		atomic_set(&dev->clk_ref, 0);
 		dev->pm.clock_off_steps |= 0x1 << 2;
 		MFC_TRACE_DEV("** clock_off wrong: ref state(%d)\n", atomic_read(&dev->clk_ref));
@@ -148,18 +148,19 @@ void mfc_pm_clock_off(struct mfc_dev *dev)
 			 * After clock off the protection disable should be
 			 * because the MFC core can continuously run during clock on
 			 */
-			mfc_debug_dev(3, "Begin: disable protection\n");
+			mfc_dev_debug(3, "Begin: disable protection\n");
 			spin_lock_irqsave(&dev->pm.clklock, flags);
 			dev->pm.clock_off_steps |= 0x1 << 5;
 			ret = exynos_smc(SMC_PROTECTION_SET, 0,
 					dev->id, SMC_PROTECTION_DISABLE);
 			if (ret != DRMDRV_OK) {
-				mfc_err_dev("Protection Disable failed! ret(%u)\n", ret);
+				mfc_dev_err("Protection Disable failed! ret(%u)\n",
+						ret);
 				call_dop(dev, dump_and_stop_debug_mode, dev);
 				spin_unlock_irqrestore(&dev->pm.clklock, flags);
 				return;
 			}
-			mfc_debug_dev(3, "End: disable protection\n");
+			mfc_dev_debug(3, "End: disable protection\n");
 			dev->pm.clock_off_steps |= 0x1 << 6;
 			spin_unlock_irqrestore(&dev->pm.clklock, flags);
 		}
@@ -168,7 +169,7 @@ void mfc_pm_clock_off(struct mfc_dev *dev)
 
 	dev->pm.clock_off_steps |= 0x1 << 7;
 	state = atomic_read(&dev->clk_ref);
-	mfc_debug_dev(2, "- %d\n", state);
+	mfc_dev_debug(2, "- %d\n", state);
 	MFC_TRACE_DEV("** clock_off end: ref(%d) step(%#x)\n", state, dev->pm.clock_off_steps);
 	MFC_TRACE_LOG_DEV("c-%d", state);
 }
@@ -180,21 +181,21 @@ int mfc_pm_power_on(struct mfc_dev *dev)
 	MFC_TRACE_DEV("++ Power on\n");
 	ret = pm_runtime_get_sync(dev->pm.device);
 	if (ret < 0) {
-		mfc_err_dev("Failed to get power: ret(%d)\n", ret);
+		mfc_dev_err("Failed to get power: ret(%d)\n", ret);
 		call_dop(dev, dump_and_stop_debug_mode, dev);
 		goto err_power_on;
 	}
 
 	dev->pm.clock = clk_get(dev->device, "aclk_mfc");
 	if (IS_ERR(dev->pm.clock)) {
-		mfc_err_dev("failed to get parent clock: ret(%d)\n", ret);
+		mfc_dev_err("failed to get parent clock: ret(%d)\n", ret);
 		ret = -ENOENT;
 		goto err_clk_get;
 	}
 
 	ret = clk_prepare(dev->pm.clock);
 	if (ret) {
-		mfc_err_dev("clk_prepare() failed: ret(%d)\n", ret);
+		mfc_dev_err("clk_prepare() failed: ret(%d)\n", ret);
 		goto err_clk_prepare;
 	}
 
@@ -226,7 +227,7 @@ int mfc_pm_power_off(struct mfc_dev *dev)
 
 	ret = pm_runtime_put_sync(dev->pm.device);
 	if (ret < 0) {
-		mfc_err_dev("Failed to put power: ret(%d)\n", ret);
+		mfc_dev_err("Failed to put power: ret(%d)\n", ret);
 		call_dop(dev, dump_and_stop_debug_mode, dev);
 		return ret;
 	}

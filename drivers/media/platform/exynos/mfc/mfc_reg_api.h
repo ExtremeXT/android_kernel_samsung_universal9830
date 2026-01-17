@@ -31,6 +31,13 @@
 #define MMCACHE_READL(offset)		readl(dev->mmcache.base + (offset))
 #define MMCACHE_WRITEL(data, offset)	writel((data), dev->mmcache.base + (offset))
 
+#define MFC_SSMT0_WRITEL(data, offset)			\
+	writel((data), dev->ssmt0_base + (offset))
+#define MFC_SSMT1_WRITEL(data, offset)			\
+	writel((data), dev->ssmt1_base + (offset))
+#define MFC_SYSREG_WRITEL(data, offset)			\
+	writel((data), dev->sysreg_base + (offset))
+
 /* version */
 #define mfc_get_fimv_info()		((MFC_READL(MFC_REG_FW_VERSION)		\
 						>> MFC_REG_FW_VER_INFO_SHFT)		\
@@ -69,14 +76,22 @@
 #define mfc_get_scratch_change()	((MFC_READL(MFC_REG_D_DISPLAY_STATUS)		\
 						>> MFC_REG_DISP_STATUS_NEED_SCRATCH_CHANGE_SHIFT)	\
 						& MFC_REG_DISP_STATUS_NEED_SCRATCH_CHANGE_MASK)
-#define mfc_get_uncomp()	((MFC_READL(MFC_REG_D_DISPLAY_STATUS)		\
-						>> MFC_REG_DISP_STATUS_UNCOMP_SHIFT)	\
-						& MFC_REG_DISP_STATUS_UNCOMP_MASK)
-
 #define mfc_get_disp_frame_type()	(MFC_READL(MFC_REG_D_DISPLAY_FRAME_TYPE)	\
 						& MFC_REG_DISPLAY_FRAME_MASK)
 #define mfc_get_dec_frame_type()	(MFC_READL(MFC_REG_D_DECODED_FRAME_TYPE)	\
 						& MFC_REG_DECODED_FRAME_MASK)
+#define mfc_get_disp_idr_flag()				\
+	((MFC_READL(MFC_REG_D_DISPLAY_FRAME_TYPE)	\
+	>> MFC_REG_DISPLAY_IDR_FLAG_SHIFT)		\
+	& MFC_REG_DISPLAY_IDR_FLAG_MASK)
+#define mfc_get_dec_idr_flag()				\
+	((MFC_READL(MFC_REG_D_DECODED_FRAME_TYPE)	\
+	>> MFC_REG_DECODED_IDR_FLAG_SHIFT)		\
+	& MFC_REG_DECODED_IDR_FLAG_MASK)
+#define mfc_get_dec_temporal_id()			\
+	((MFC_READL(MFC_REG_D_H264_INFO)		\
+	>> MFC_REG_D_H264_INFO_TEMPORAL_ID_SHIFT)	\
+	& MFC_REG_D_H264_INFO_TEMPORAL_ID_MASK)
 #define mfc_get_interlace_type()	((MFC_READL(MFC_REG_D_DISPLAY_FRAME_TYPE)	\
 						>> MFC_REG_DISPLAY_TEMP_INFO_SHIFT)	\
 						& MFC_REG_DISPLAY_TEMP_INFO_MASK)
@@ -86,10 +101,11 @@
 #define mfc_is_mbaff_picture()	((MFC_READL(MFC_REG_D_H264_INFO)		\
 						>> MFC_REG_D_H264_INFO_MBAFF_FRAME_FLAG_SHIFT)\
 						& MFC_REG_D_H264_INFO_MBAFF_FRAME_FLAG_MASK)
-#define mfc_is_sbwc_avail()		((MFC_READL(MFC_REG_D_DISPLAY_STATUS)		\
-						>> MFC_REG_DISP_STATUS_COMP_SHIFT)\
-						& MFC_REG_DISP_STATUS_COMP_MASK)
+#define mfc_is_sbwc_avail()		((MFC_READL(MFC_REG_D_DISPLAY_STATUS) \
+					>> MFC_REG_DISP_STATUS_COMP_SHIFT)    \
+					& MFC_REG_DISP_STATUS_COMP_MASK)
 
+#define mfc_get_aspect_ratio()	MFC_READL(MFC_REG_D_DISPLAY_ASPECT_RATIO)
 #define mfc_get_img_width()		MFC_READL(MFC_REG_D_DISPLAY_FRAME_WIDTH)
 #define mfc_get_img_height()	MFC_READL(MFC_REG_D_DISPLAY_FRAME_HEIGHT)
 #define mfc_get_disp_y_addr()	MFC_READL(MFC_REG_D_DISPLAY_LUMA_ADDR)
@@ -99,21 +115,26 @@
 /* kind of interrupt */
 #define mfc_get_int_err()		MFC_READL(MFC_REG_ERROR_CODE)
 
-
 /* additional information */
 #define mfc_get_consumed_stream()		MFC_READL(MFC_REG_D_DECODED_NAL_SIZE)
 #define mfc_get_dpb_count()			MFC_READL(MFC_REG_D_MIN_NUM_DPB)
 #define mfc_get_min_dpb_size(x)		MFC_READL(MFC_REG_D_MIN_FIRST_PLANE_DPB_SIZE + (x * 4))
-#define mfc_get_min_dpb_size_2bit(x)		MFC_READL(MFC_REG_D_MIN_FIRST_PLANE_2BIT_DPB_SIZE + (x * 4))
-#define mfc_get_scratch_size()		MFC_READL(MFC_REG_D_MIN_SCRATCH_BUFFER_SIZE)
-#define mfc_get_stride_size(x)		MFC_READL(MFC_REG_D_FIRST_PLANE_DPB_STRIDE_SIZE + (x * 4))
-#define mfc_get_stride_size_2bit(x)		MFC_READL(MFC_REG_D_FIRST_PLANE_2BIT_DPB_STRIDE_SIZE + (x * 4))
+#define mfc_get_min_dpb_size_2bit(x)		\
+	MFC_READL(MFC_REG_D_MIN_FIRST_PLANE_2BIT_DPB_SIZE + (x * 4))
+#define mfc_get_scratch_size()			\
+	MFC_READL(MFC_REG_D_MIN_SCRATCH_BUFFER_SIZE)
+#define mfc_get_stride_size(x)			\
+	MFC_READL(MFC_REG_D_FIRST_PLANE_DPB_STRIDE_SIZE + (x * 4))
+#define mfc_get_stride_size_2bit(x)		\
+	MFC_READL(MFC_REG_D_FIRST_PLANE_2BIT_DPB_STRIDE_SIZE + (x * 4))
 #define mfc_get_mv_count()			MFC_READL(MFC_REG_D_MIN_NUM_MV)
 #define mfc_get_inst_no()			MFC_READL(MFC_REG_RET_INSTANCE_ID)
 #define mfc_get_enc_dpb_count()		MFC_READL(MFC_REG_E_NUM_DPB)
 #define mfc_get_enc_scratch_size()		MFC_READL(MFC_REG_E_MIN_SCRATCH_BUFFER_SIZE)
-#define mfc_get_enc_luma_size()		MFC_READL(MFC_REG_E_MIN_LUMA_DPB_SIZE)
-#define mfc_get_enc_chroma_size()		MFC_READL(MFC_REG_E_MIN_CHROMA_DPB_SIZE)
+#define mfc_get_enc_luma_size()			\
+	MFC_READL(MFC_REG_E_MIN_LUMA_DPB_SIZE)
+#define mfc_get_enc_chroma_size()		\
+	MFC_READL(MFC_REG_E_MIN_CHROMA_DPB_SIZE)
 #define mfc_get_enc_strm_size()		MFC_READL(MFC_REG_E_STREAM_SIZE)
 #define mfc_get_enc_slice_type()		MFC_READL(MFC_REG_E_SLICE_TYPE)
 #define mfc_get_enc_pic_count()		MFC_READL(MFC_REG_E_PICTURE_COUNT)
@@ -158,14 +179,23 @@
 						& MFC_REG_D_MVC_VIEW_ID_DISP_MASK)
 #define mfc_get_profile()			(MFC_READL(MFC_REG_D_DECODED_PICTURE_PROFILE)	\
 						& MFC_REG_D_DECODED_PIC_PROFILE_MASK)
+#define mfc_get_level()							\
+	((MFC_READL(MFC_REG_D_DECODED_PICTURE_PROFILE)			\
+	>> MFC_REG_D_PIC_LEVEL_SHIFT)					\
+	& MFC_REG_D_PIC_LEVEL_MASK)
 #define mfc_get_luma_bit_depth_minus8()	((MFC_READL(MFC_REG_D_DECODED_PICTURE_PROFILE)	\
 						>> MFC_REG_D_BIT_DEPTH_LUMA_MINUS8_SHIFT)	\
 						& MFC_REG_D_BIT_DEPTH_LUMA_MINUS8_MASK)
 #define mfc_get_chroma_bit_depth_minus8()	((MFC_READL(MFC_REG_D_DECODED_PICTURE_PROFILE)	\
 						>> MFC_REG_D_BIT_DEPTH_CHROMA_MINUS8_SHIFT)	\
 						& MFC_REG_D_BIT_DEPTH_CHROMA_MINUS8_MASK)
-#define mfc_get_dec_used_flag()		(((unsigned long)(MFC_READL(MFC_REG_D_USED_DPB_FLAG_UPPER)) << 32) |	\
-						MFC_READL(MFC_REG_D_USED_DPB_FLAG_LOWER))
+#define mfc_get_display_delay()				\
+	((MFC_READL(MFC_REG_D_DECODED_PICTURE_PROFILE)	\
+	>> MFC_REG_D_DISPLAY_DELAY_SHIFT)		\
+	& MFC_REG_D_DISPLAY_DELAY_MASK)
+#define mfc_get_dec_used_flag()				\
+	(((unsigned long)(MFC_READL(MFC_REG_D_USED_DPB_FLAG_UPPER)) << 32) |\
+	 MFC_READL(MFC_REG_D_USED_DPB_FLAG_LOWER))
 #define mfc_get_enc_nal_done_info()		((MFC_READL(MFC_REG_E_NAL_DONE_INFO) & (0x3 << 4)) >> 4)
 #define mfc_get_chroma_format()		(MFC_READL(MFC_REG_D_CHROMA_FORMAT)		\
 						& MFC_REG_D_CHROMA_FORMAT_MASK)
@@ -180,9 +210,10 @@
 						& MFC_REG_DEC_STATUS_NUM_OF_TILE_MASK)
 #define mfc_get_lcu_size()			(MFC_READL(MFC_REG_D_HEVC_INFO)		\
 						& MFC_REG_D_HEVC_INFO_LCU_SIZE_MASK)
-#define mfc_get_disp_res_change()		((MFC_READL(MFC_REG_D_VP9_INFO)	\
-						>> MFC_REG_D_VP9_INFO_DISP_RES_SHIFT)	\
-						& MFC_REG_D_VP9_INFO_DISP_RES_MASK)
+#define mfc_get_disp_res_change()		\
+	((MFC_READL(MFC_REG_D_VP9_INFO)		\
+	>> MFC_REG_D_VP9_INFO_DISP_RES_SHIFT)	\
+	& MFC_REG_D_VP9_INFO_DISP_RES_MASK)
 
 /* nal queue information */
 #define mfc_get_nal_q_input_count()		MFC_READL(MFC_REG_NAL_QUEUE_INPUT_COUNT)
@@ -259,6 +290,17 @@ static inline void mfc_clear_roi_enable(struct mfc_dev *dev)
 	MFC_WRITEL(reg, MFC_REG_E_RC_ROI_CTRL);
 }
 
+static inline void mfc_update_tag(struct mfc_ctx *ctx, int tag)
+{
+	struct mfc_dev *dev = ctx->dev;
+
+	if (MFC_READL(MFC_REG_D_PICTURE_TAG) != tag) {
+		mfc_debug(2, "src reused but tag is different updated to %d\n",
+					tag);
+		MFC_WRITEL(tag, MFC_REG_D_PICTURE_TAG);
+	}
+}
+
 static inline void mfc_set_enc_src_sbwc(struct mfc_dev *dev, int onoff)
 {
 	unsigned int reg = 0;
@@ -277,6 +319,9 @@ static inline void mfc_clear_enc_src_sbwc(struct mfc_dev *dev)
 	reg &= ~(0xf << 14);
 	MFC_WRITEL(reg, MFC_REG_E_PARAM_CHANGE);
 }
+
+void mfc_enc_save_regression_result(struct mfc_ctx *ctx);
+void mfc_dec_save_regression_result(struct mfc_ctx *ctx);
 
 void mfc_dbg_enable(struct mfc_dev *dev);
 void mfc_dbg_disable(struct mfc_dev *dev);

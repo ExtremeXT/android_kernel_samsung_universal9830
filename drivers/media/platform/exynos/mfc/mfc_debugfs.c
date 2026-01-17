@@ -15,7 +15,6 @@
 
 #include "mfc_debugfs.h"
 #include "mfc_sync.h"
-#include "mfc_meminfo.h"
 
 #include "mfc_pm.h"
 
@@ -34,11 +33,12 @@ unsigned int sfr_dump;
 unsigned int mmcache_dump;
 unsigned int mmcache_disable;
 unsigned int llc_disable;
+unsigned int slc_disable;
 unsigned int perf_boost_mode;
 unsigned int drm_predict_disable;
 unsigned int reg_test;
-unsigned int meminfo_enable;
 unsigned int feature_option;
+unsigned int regression_option;
 
 static int __mfc_info_show(struct seq_file *s, void *unused)
 {
@@ -51,19 +51,23 @@ static int __mfc_info_show(struct seq_file *s, void *unused)
 	seq_printf(s, "[VERSION] H/W: v%x, F/W: %06x(%c), DRV: %d\n",
 		 dev->pdata->ip_ver, dev->fw.date,
 		 dev->fw.fimv_info, MFC_DRIVER_INFO);
-	seq_printf(s, "[PM] power: %d, clock: %d, QoS level: %d\n",
-			mfc_pm_get_pwr_ref_cnt(dev), mfc_pm_get_clk_ref_cnt(dev),
-			atomic_read(&dev->qos_req_cur) - 1);
+	seq_printf(s, "[PM] power: %d, clock: %d\n",
+			mfc_pm_get_pwr_ref_cnt(dev), mfc_pm_get_clk_ref_cnt(dev));
 	seq_printf(s, "[CTX] num_inst: %d, num_drm_inst: %d, curr_ctx: %d(is_drm: %d)\n",
 			dev->num_inst, dev->num_drm_inst, dev->curr_ctx, dev->curr_ctx_is_drm);
 	seq_printf(s, "[HWLOCK] bits: %#lx, dev: %#lx, owned_by_irq = %d, wl_count = %d\n",
 			dev->hwlock.bits, dev->hwlock.dev,
 			dev->hwlock.owned_by_irq, dev->hwlock.wl_count);
-	seq_printf(s, "[DEBUG MODE] dt: %s sysfs: %s\n", dev->pdata->debug_mode ? "enabled" : "disabled",
+	seq_printf(s, "[DEBUG MODE] dt: %s sysfs: %s\n",
+			dev->pdata->debug_mode ? "enabled" : "disabled",
 			debug_mode_en ? "enabled" : "disabled");
-	seq_printf(s, "[MMCACHE] %s(%s)\n",
+	seq_printf(s, "[CACHE] mmcache %s(%s), llc %s(%s), slc %s(%s)\n",
 			dev->has_mmcache ? "supported" : "not supported",
-			dev->mmcache.is_on_status ? "enabled" : "disabled");
+			dev->mmcache.is_on_status ? "enabled" : "disabled",
+			dev->has_llc ? "supported" : "not supported",
+			dev->llc_on_status ? "enabled" : "disabled",
+			dev->has_slc ? "supported" : "not supported",
+			dev->slc_on_status ? "enabled" : "disabled");
 	seq_printf(s, "[PERF BOOST] %s\n", perf_boost_mode ? "enabled" : "disabled");
 	seq_printf(s, "[FEATURES] nal_q: %d(0x%x), skype: %d(0x%x), black_bar: %d(0x%x)\n",
 			dev->pdata->nal_q.support, dev->pdata->nal_q.version,
@@ -92,24 +96,28 @@ static int __mfc_info_show(struct seq_file *s, void *unused)
 			else
 				codec_name = ctx->dst_fmt->name;
 
-			seq_printf(s, "[CTX:%d] %s %s, %s, %s, size: %dx%d@%ldfps(op: %ldfps), crop: %d %d %d %d, state: %d\n",
+			seq_printf(s, "[CTX:%d] %s %s, %s, %s, size: %dx%d, crop: %d %d %d %d, state: %d\n",
 				ctx->num,
 				ctx->type == MFCINST_DECODER ? "DEC" : "ENC",
 				ctx->is_drm ? "Secure" : "Normal",
-				ctx->state > MFCINST_INIT ? ctx->src_fmt->name : "undefined src fmt",
-				ctx->state > MFCINST_INIT ? ctx->dst_fmt->name : "undefined dst fmt",
+				ctx->state > MFCINST_INIT ?
+				ctx->src_fmt->name : "undefined src fmt",
+				ctx->state > MFCINST_INIT ?
+				ctx->dst_fmt->name : "undefined dst fmt",
 				ctx->img_width, ctx->img_height,
-				ctx->last_framerate / 1000,
-				ctx->operating_framerate,
 				ctx->crop_width, ctx->crop_height,
 				ctx->crop_left, ctx->crop_top, ctx->state);
-			seq_printf(s, "        prio %d, rt %d, queue(src: %d, dst: %d, src_nal: %d, dst_nal: %d, ref: %d)\n",
-				ctx->prio, ctx->rt,
-				mfc_get_queue_count(&ctx->buf_queue_lock, &ctx->src_buf_queue),
-				mfc_get_queue_count(&ctx->buf_queue_lock, &ctx->dst_buf_queue),
-				mfc_get_queue_count(&ctx->buf_queue_lock, &ctx->src_buf_nal_queue),
-				mfc_get_queue_count(&ctx->buf_queue_lock, &ctx->dst_buf_nal_queue),
-				mfc_get_queue_count(&ctx->buf_queue_lock, &ctx->ref_buf_queue));
+			seq_printf(s, "        queue(src: %d, dst: %d, src_nal: %d, dst_nal: %d, ref: %d)\n",
+				mfc_get_queue_count(&ctx->buf_queue_lock,
+						&ctx->src_buf_queue),
+				mfc_get_queue_count(&ctx->buf_queue_lock,
+						&ctx->dst_buf_queue),
+				mfc_get_queue_count(&ctx->buf_queue_lock,
+						&ctx->src_buf_nal_queue),
+				mfc_get_queue_count(&ctx->buf_queue_lock,
+						&ctx->dst_buf_nal_queue),
+				mfc_get_queue_count(&ctx->buf_queue_lock,
+						&ctx->ref_buf_queue));
 		}
 	}
 
@@ -179,12 +187,12 @@ static ssize_t __mfc_reg_info_write(struct file *file, const char __user *user_b
 
 	if (!dev->reg_buf) {
 		dev->reg_buf = kzalloc(SZ_1M, GFP_KERNEL);
-		mfc_info_dev("[REGTEST] alloc reg_buf\n");
+		mfc_dev_info("[REGTEST] alloc reg_buf\n");
 	}
 
 	if (!dev->reg_val) {
 		dev->reg_val = kzalloc(SZ_1M, GFP_KERNEL);
-		mfc_info_dev("[REGTEST] alloc reg_val\n");
+		mfc_dev_info("[REGTEST] alloc reg_val\n");
 	}
 
 	len = simple_write_to_buffer(dev->reg_buf, SZ_1M - 1,
@@ -192,7 +200,7 @@ static ssize_t __mfc_reg_info_write(struct file *file, const char __user *user_b
 	if (len <= 0)
 		return len;
 
-	mfc_info_dev("[REGTEST] len: %d, ppos: %llu\n", len, *ppos);
+	mfc_dev_info("[REGTEST] len: %d, ppos: %llu\n", len, *ppos);
 
 	dev->reg_buf[*ppos] = '\0';
 
@@ -214,113 +222,6 @@ static ssize_t __mfc_reg_info_write(struct file *file, const char __user *user_b
 }
 #endif
 
-static void __mfc_meminfo_show_all(struct seq_file *s, struct mfc_meminfo *meminfo, int cnt)
-{
-	char *type;
-	int i;
-
-	seq_puts(s, "buffer info:\n");
-	seq_printf(s, "%10s %20s %14s %7s %10s %10s\n",
-			"type", "buffer", "buf size", "count", "size", "size(hex)");
-
-	for (i = 0; i < cnt; i++) {
-		switch (meminfo[i].type) {
-		case MFC_MEMINFO_FW:
-			type = "FW";
-			break;
-		case MFC_MEMINFO_INTERNAL:
-			type = "INTERNAL";
-			break;
-		case MFC_MEMINFO_INPUT:
-			type = "INPUT";
-			break;
-		case MFC_MEMINFO_OUTPUT:
-			type = "OUTPUT";
-			break;
-		default:
-			type = "";
-			break;
-		}
-
-		seq_printf(s, "%10s %20s %14zu %7d %10zu %#10zx\n",
-				type,
-				meminfo[i].name,
-				meminfo[i].size,
-				meminfo[i].count,
-				meminfo[i].total,
-				meminfo[i].total);
-	}
-}
-
-static int __mfc_meminfo_show(struct seq_file *s, void *unused)
-{
-	struct mfc_dev *dev = s->private;
-	struct mfc_ctx *ctx = NULL;
-	char *codec_name = NULL, *fmt_name = NULL;
-	size_t total = 0, total_max = 0;
-	int i, num;
-
-	if (!meminfo_enable) {
-		seq_puts(s, "meminfo_enable is not set. ""echo 1 > meminfo_enable""\n");
-		return 0;
-	}
-
-	seq_puts(s, "\n\n-----------------------------------------\n");
-	seq_puts(s, ">> MFC memory information\n");
-	seq_puts(s, "-----------------------------------------\n");
-
-	num = mfc_meminfo_get_dev(dev);
-	seq_printf(s, "\n>> [DEV] memory size: %zu kB\n",
-			(dev->meminfo[MFC_MEMINFO_DEV_ALL].total / 1024));
-	total += dev->meminfo[MFC_MEMINFO_DEV_ALL].total;
-	total_max += dev->meminfo[MFC_MEMINFO_DEV_ALL].total;
-
-	__mfc_meminfo_show_all(s, dev->meminfo, num);
-
-	for (i = 0; i < MFC_NUM_CONTEXTS; i++) {
-		ctx = dev->ctx[i];
-		if (ctx) {
-			if (ctx->type == MFCINST_DECODER) {
-				codec_name = ctx->src_fmt->name;
-				fmt_name = ctx->dst_fmt->name;
-			} else {
-				codec_name = ctx->dst_fmt->name;
-				fmt_name = ctx->src_fmt->name;
-			}
-
-			num = mfc_meminfo_get_ctx(ctx);
-			seq_puts(s, "\n-----------------------------------------\n");
-			seq_printf(s, ">> [CTX:%d] %s memory size: %zu kB (MAX: %zu kB)\n",
-				ctx->num,
-				ctx->type == MFCINST_DECODER ? "Decoder" : "Encoder",
-				(ctx->meminfo_size[MFC_MEMINFO_CTX_ALL] / 1024),
-				(ctx->meminfo_size[MFC_MEMINFO_CTX_MAX] / 1024));
-			seq_printf(s, "Input buffer		%zu kB\n",
-				(ctx->meminfo_size[MFC_MEMINFO_INPUT] / 1024));
-			seq_printf(s, "Output buffer		%zu kB\n",
-				(ctx->meminfo_size[MFC_MEMINFO_OUTPUT] / 1024));
-			seq_printf(s, "Internal buffer		%zu kB\n",
-				(ctx->meminfo_size[MFC_MEMINFO_INTERNAL] / 1024));
-			seq_puts(s, "info:\n");
-			seq_printf(s, "codec type   %s\n", codec_name);
-			seq_printf(s, "frame format %s\n", fmt_name);
-			seq_printf(s, "frame size   %d x %d\n", ctx->img_width, ctx->img_height);
-			if (ctx->type == MFCINST_DECODER)
-				seq_printf(s, "dpb count    %d\n", (ctx->dpb_count + MFC_NUM_EXTRA_DPB));
-
-			total += ctx->meminfo_size[MFC_MEMINFO_CTX_ALL];
-			total_max += ctx->meminfo_size[MFC_MEMINFO_CTX_MAX];
-			__mfc_meminfo_show_all(s, ctx->meminfo, num);
-		}
-	}
-	seq_puts(s, "\n=========================================\n");
-	seq_printf(s, "MFC MEMORY SIZE: %zu kB (MAX: %zu kB)\n",
-			total / 1024, total_max / 1024);
-	seq_puts(s, "=========================================\n");
-
-	return 0;
-}
-
 static int __mfc_info_open(struct inode *inode, struct file *file)
 {
 	return single_open(file, __mfc_info_show, inode->i_private);
@@ -331,6 +232,33 @@ static int __mfc_debug_info_open(struct inode *inode, struct file *file)
 	return single_open(file, __mfc_debug_info_show, inode->i_private);
 }
 
+static int __mfc_regression_result_show(struct seq_file *s, void *unused)
+{
+	struct mfc_dev *dev = g_mfc_dev;
+	struct mfc_ctx *ctx = dev->ctx[dev->curr_ctx];
+	int i;
+
+
+	if (!ctx)
+		return 0;
+
+	if (ctx->regression_val) {
+		for (i = 0; i < ctx->regression_cnt; i++) {
+			if (regression_option & MFC_TEST_ENC_QP)
+				seq_printf(s, "%d ", ctx->regression_val[i]);
+			else
+				seq_printf(s, "%08x ", ctx->regression_val[i]);
+			if ((ctx->regression_val[i] == 0xDEADC0DE) ||
+				(regression_option & MFC_TEST_ENC_QP))
+				seq_puts(s, "\n");
+		}
+	} else {
+		seq_puts(s, "-----There is no regression result\n");
+	}
+
+	return 0;
+}
+
 #ifdef CONFIG_MFC_REG_TEST
 static int __mfc_reg_info_open(struct inode *inode, struct file *file)
 {
@@ -338,9 +266,10 @@ static int __mfc_reg_info_open(struct inode *inode, struct file *file)
 }
 #endif
 
-static int __mfc_meminfo_open(struct inode *inode, struct file *file)
+static int __mfc_regression_result_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, __mfc_meminfo_show, inode->i_private);
+	return single_open(file, __mfc_regression_result_show,
+			inode->i_private);
 }
 
 static const struct file_operations mfc_info_fops = {
@@ -367,8 +296,8 @@ static const struct file_operations reg_info_fops = {
 };
 #endif
 
-static const struct file_operations mfc_meminfo_fops = {
-	.open = __mfc_meminfo_open,
+static const struct file_operations regression_result_fops = {
+	.open = __mfc_regression_result_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = single_release,
@@ -380,7 +309,7 @@ void mfc_init_debugfs(struct mfc_dev *dev)
 
 	debugfs->root = debugfs_create_dir("mfc", NULL);
 	if (!debugfs->root) {
-		mfc_err_dev("debugfs: failed to create root directory\n");
+		mfc_dev_err("debugfs: failed to create root directory\n");
 		return;
 	}
 
@@ -394,6 +323,10 @@ void mfc_init_debugfs(struct mfc_dev *dev)
 	debugfs->reg_test = debugfs_create_u32("reg_test",
 			0644, debugfs->root, &reg_test);
 #endif
+	debugfs->regression_option = debugfs_create_u32("regression_option",
+			0644, debugfs->root, &regression_option);
+	debugfs->regression_result = debugfs_create_file("regression_result",
+			0444, debugfs->root, dev, &regression_result_fops);
 	debugfs->debug_level = debugfs_create_u32("debug",
 			0644, debugfs->root, &debug_level);
 	debugfs->debug_ts = debugfs_create_u32("debug_ts",
@@ -420,14 +353,12 @@ void mfc_init_debugfs(struct mfc_dev *dev)
 			0644, debugfs->root, &mmcache_disable);
 	debugfs->llc_disable = debugfs_create_u32("llc_disable",
 			0644, debugfs->root, &llc_disable);
+	debugfs->slc_disable = debugfs_create_u32("slc_disable",
+			0644, debugfs->root, &slc_disable);
 	debugfs->perf_boost_mode = debugfs_create_u32("perf_boost_mode",
 			0644, debugfs->root, &perf_boost_mode);
 	debugfs->drm_predict_disable = debugfs_create_u32("drm_predict_disable",
 			0644, debugfs->root, &drm_predict_disable);
-	debugfs->meminfo = debugfs_create_file("meminfo",
-			0444, debugfs->root, dev, &mfc_meminfo_fops);
-	debugfs->meminfo_enable = debugfs_create_u32("meminfo_enable",
-			0644, debugfs->root, &meminfo_enable);
 	debugfs->feature_option = debugfs_create_u32("feature_option",
 			0644, debugfs->root, &feature_option);
 }

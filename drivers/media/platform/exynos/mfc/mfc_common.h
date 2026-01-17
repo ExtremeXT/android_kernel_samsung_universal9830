@@ -30,7 +30,7 @@
 #include "exynos_mfc_media.h"
 #include "mfc_data_struct.h"
 
-#define MFC_DRIVER_INFO		190719
+#define MFC_DRIVER_INFO		190319
 
 #define MFC_MAX_REF_BUFS	2
 #define MFC_FRAME_PLANES	2
@@ -112,6 +112,7 @@
 #define MFC_FMT_RGB		(1 << 4)
 #define MFC_FMT_SBWC		(1 << 5)
 #define MFC_FMT_SBWCL		(1 << 6)
+#define MFC_FMT_AFBC		(1 << 7)
 
 /* node check */
 #define IS_DEC_NODE(n)		((n == EXYNOS_VIDEONODE_MFC_DEC) ||	\
@@ -133,6 +134,7 @@
 #define IS_VC1_RCV_DEC(ctx)	((ctx)->codec_mode == MFC_REG_CODEC_VC1_RCV_DEC)
 #define IS_MPEG2_DEC(ctx)	((ctx)->codec_mode == MFC_REG_CODEC_MPEG2_DEC)
 #define IS_HEVC_DEC(ctx)	((ctx)->codec_mode == MFC_REG_CODEC_HEVC_DEC)
+#define IS_VP8_DEC(ctx)		((ctx)->codec_mode == MFC_REG_CODEC_VP8_DEC)
 #define IS_VP9_DEC(ctx)		((ctx)->codec_mode == MFC_REG_CODEC_VP9_DEC)
 #define IS_BPG_DEC(ctx)		((ctx)->codec_mode == MFC_REG_CODEC_BPG_DEC)
 
@@ -159,17 +161,22 @@
 #define CODEC_422FORMAT(ctx)	(IS_HEVC_DEC(ctx) || IS_HEVC_ENC(ctx) ||	\
 				IS_VP9_DEC(ctx) || IS_VP9_ENC(ctx) ||		\
 				IS_BPG_DEC(ctx) || IS_BPG_ENC(ctx))
-#define CODEC_HIGH_PERF(ctx)	(IS_H264_DEC(ctx) || IS_H264_MVC_DEC(ctx) || IS_HEVC_DEC(ctx))
+#define CODEC_HIGH_PERF(ctx)	(IS_H264_DEC(ctx) || IS_H264_MVC_DEC(ctx) || \
+				IS_HEVC_DEC(ctx))
 #define ON_RES_CHANGE(ctx)	(((ctx)->state >= MFCINST_RES_CHANGE_INIT) &&	\
 				 ((ctx)->state <= MFCINST_RES_CHANGE_END))
-#define IS_NO_DISPLAY(ctx, err) ((IS_VC1_RCV_DEC(ctx) &&					\
-				mfc_get_warn(err) == MFC_REG_ERR_SYNC_POINT_NOT_RECEIVED) ||	\
-				(mfc_get_warn(err) == MFC_REG_ERR_BROKEN_LINK))
+#define IS_NO_DISPLAY(ctx, err)						\
+	((mfc_get_warn(err) == MFC_REG_ERR_SYNC_POINT_NOT_RECEIVED) ||	\
+	(mfc_get_warn(err) == MFC_REG_ERR_BROKEN_LINK))
 #define IS_NO_ERROR(err)	((err) == 0 ||		\
 				(mfc_get_warn(err)	\
 				 == MFC_REG_ERR_SYNC_POINT_NOT_RECEIVED))
 
 #define IS_BUFFER_BATCH_MODE(ctx)	((ctx)->batch_mode == 1)
+#define IS_NO_HEADER_GENERATE(ctx, p)					\
+	((p->seq_hdr_mode ==						\
+	  V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME) ||		\
+	((IS_VP8_ENC(ctx) || IS_VP9_ENC(ctx)) && p->ivf_header_disable))
 
 /*
  levels with maximum property values
@@ -185,21 +192,22 @@
 #define IS_LV51_MB(mb)		(((mb) > LV51_MB_MIN) && ((mb) <= LV51_MB_MAX))
 #define IS_LV60_MB(mb)		(((mb) > LV51_MB_MAX) && ((mb) <= LV60_MB_MAX))
 
-#define IS_BLACKBAR_OFF(ctx)	((ctx)->crop_height > 2160)
 #define IS_SUPER64_BFRAME(ctx, size, type)	((ctx->is_10bit) && (size >= 2) && (type == 3))
 
-#define IS_SBWC_8B(fmt)		((((fmt)->fourcc) == V4L2_PIX_FMT_NV12M_SBWC_8B) ||	\
-				(((fmt)->fourcc) == V4L2_PIX_FMT_NV21M_SBWC_8B) || \
-				(((fmt)->fourcc) == V4L2_PIX_FMT_NV12N_SBWC_8B))
-#define IS_SBWC_10B(fmt)	((((fmt)->fourcc) == V4L2_PIX_FMT_NV12M_SBWC_10B) || \
-				(((fmt)->fourcc) == V4L2_PIX_FMT_NV21M_SBWC_10B) || \
-				(((fmt)->fourcc) == V4L2_PIX_FMT_NV12N_SBWC_10B))
+#define IS_SBWC_8B(fmt)						\
+	((((fmt)->fourcc) == V4L2_PIX_FMT_NV12M_SBWC_8B) ||	\
+	(((fmt)->fourcc) == V4L2_PIX_FMT_NV21M_SBWC_8B) ||	\
+	(((fmt)->fourcc) == V4L2_PIX_FMT_NV12N_SBWC_8B))
+#define IS_SBWC_10B(fmt)					\
+	((((fmt)->fourcc) == V4L2_PIX_FMT_NV12M_SBWC_10B) ||	\
+	(((fmt)->fourcc) == V4L2_PIX_FMT_NV21M_SBWC_10B) ||	\
+	(((fmt)->fourcc) == V4L2_PIX_FMT_NV12N_SBWC_10B))
 #define IS_SBWC_FMT(fmt)	(IS_SBWC_8B(fmt) || IS_SBWC_10B(fmt))
 
-#define IS_2BIT_NEED(ctx)	(((ctx)->is_10bit && !(ctx)->mem_type_10bit &&	\
-				!(ctx)->is_sbwc_lossy) || (ctx)->is_sbwc)
-#define IS_SBWC_DPB(ctx)	((ctx)->is_sbwc || (ctx)->is_sbwc_lossy ||	\
-				((ctx)->enc_priv->sbwc_option == 2))
+#define IS_2BIT_NEED(ctx) (((ctx)->is_10bit && !(ctx)->mem_type_10bit && \
+			  !(ctx)->is_sbwc_lossy) || (ctx)->is_sbwc)
+#define IS_COMPRESS_DPB(ctx)  ((ctx)->is_sbwc || (ctx)->is_sbwc_lossy || \
+			(ctx)->is_afbc || ((ctx)->enc_priv->sbwc_option == 2))
 
 /* Extra information for Decoder */
 #define	DEC_SET_DUAL_DPB		(1 << 0)
@@ -208,8 +216,7 @@
 #define	DEC_SET_SKYPE_FLAG		(1 << 3)
 #define	DEC_SET_HDR10_PLUS		(1 << 4)
 #define	DEC_SET_DRV_DPB_MANAGER		(1 << 5)
-#define	DEC_SET_OPERATING_FPS		(1 << 8)
-#define	DEC_SET_PRIORITY		(1 << 23)
+#define	DEC_SET_C2_INTERFACE		(1 << 6) //can be changed display_delay
 
 /* Extra information for Encoder */
 #define	ENC_SET_RGB_INPUT		(1 << 0)
@@ -227,9 +234,6 @@
 #define	ENC_SET_HDR10_PLUS		(1 << 12)
 #define	ENC_SET_VP9_PROFILE_LEVEL	(1 << 13)
 #define	ENC_SET_DROP_CONTROL		(1 << 14)
-#define	ENC_SET_CHROMA_QP_CONTROL	(1 << 15)
-#define	ENC_SET_OPERATING_FPS		(1 << 18)
-#define	ENC_SET_PRIORITY		(1 << 23)
 
 #define MFC_FEATURE_SUPPORT(dev, f)	((f).support && ((dev)->fw.date >= (f).version))
 

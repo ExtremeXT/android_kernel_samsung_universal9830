@@ -52,11 +52,14 @@ enum v4l2_mpeg_mfc51_video_frame_type {
 	V4L2_MPEG_MFC51_VIDEO_FRAME_TYPE_OTHERS		= 5,
 };
 
+/* buffer flag */
+#define V4L2_BUF_FLAG_BROKEN			0x00000080
+
 /* new entry for enum v4l2_mpeg_video_mpeg4_level */
 #define V4L2_MPEG_VIDEO_MPEG4_LEVEL_6			8
 
 /* new entry for enum v4l2_mpeg_video_h264_level */
-#define V4L2_MPEG_VIDEO_H264_LEVEL_6_0			17
+#define V4L2_MPEG_VIDEO_H264_LEVEL_5_2			16
 
 /* new entry for enum v4l2_mpeg_video_header_mode */
 #define V4L2_MPEG_VIDEO_HEADER_MODE_AT_THE_READY	2
@@ -136,13 +139,11 @@ enum v4l2_mpeg_mfc51_video_frame_type {
 					(V4L2_CID_MPEG_MFC_BASE + 27)
 #define V4L2_CID_MPEG_MFC51_VIDEO_CRC_DATA_2BIT_CHROMA	\
 					(V4L2_CID_MPEG_MFC_BASE + 28)
-#define V4L2_CID_MPEG_VIDEO_PRIORITY			\
-					(V4L2_CID_MPEG_MFC_BASE + 36)
+#define V4L2_CID_MPEG_MFC51_VIDEO_FRAME_POC			\
+					(V4L2_CID_MPEG_MFC_BASE + 29)
 
-#define V4L2_CID_MPEG_VIDEO_CHROMA_QP_OFFSET_CB		\
-					(V4L2_CID_MPEG_MFC_BASE + 38)
-#define V4L2_CID_MPEG_VIDEO_CHROMA_QP_OFFSET_CR		\
-					(V4L2_CID_MPEG_MFC_BASE + 39)
+#define V4L2_CID_MPEG_VIDEO_GET_DISPLAY_DELAY			\
+					(V4L2_CID_MPEG_MFC_BASE + 40)
 #define V4L2_CID_MPEG_VIDEO_DROP_CONTROL			\
 					(V4L2_CID_MPEG_MFC_BASE + 41)
 #define V4L2_CID_MPEG_VIDEO_H264_MVC_VIEW_ID			\
@@ -401,8 +402,6 @@ enum v4l2_mpeg_mfc51_video_frame_type {
 /* empty number */
 #define V4L2_CID_MPEG_VIDEO_VP9_LEVEL				\
 					(V4L2_CID_MPEG_MFC_BASE + 183)
-#define V4L2_CID_MPEG_VIDEO_UNCOMP_FMT				\
-					(V4L2_CID_MPEG_MFC_BASE + 184)
 
 /* CIDs for new common interface */
 #define V4L2_CID_MPEG_VIDEO_ROI_CONTROL				\

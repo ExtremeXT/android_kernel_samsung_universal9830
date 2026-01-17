@@ -7,3 +7,9 @@ config VIDEO_EXYNOS_MFC
 	---help---
 	  MFC driver for V4L2.
 
+config MFC_USES_LLC
+	bool "MFC LLC support"
+	default n
+	depends on VIDEO_EXYNOS_MFC
+	---help---
+	  Uses the LLC of MFC.

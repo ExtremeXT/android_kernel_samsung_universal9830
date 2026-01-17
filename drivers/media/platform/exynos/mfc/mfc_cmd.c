@@ -20,6 +20,7 @@
 #include "mfc_enc_param.h"
 #include "mfc_mmcache.h"
 #include "mfc_llc.h"
+#include "mfc_slc.h"
 
 #include "mfc_utils.h"
 #include "mfc_buf.h"
@@ -30,7 +31,7 @@ void mfc_cmd_sys_init(struct mfc_dev *dev,
 	struct mfc_ctx_buf_size *buf_size;
 	struct mfc_special_buf *ctx_buf;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	mfc_clean_dev_int_flags(dev);
 
@@ -45,27 +46,27 @@ void mfc_cmd_sys_init(struct mfc_dev *dev,
 
 	mfc_cmd_host2risc(dev, MFC_REG_H2R_CMD_SYS_INIT);
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 void mfc_cmd_sleep(struct mfc_dev *dev)
 {
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	mfc_clean_dev_int_flags(dev);
 	mfc_cmd_host2risc(dev, MFC_REG_H2R_CMD_SLEEP);
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 void mfc_cmd_wakeup(struct mfc_dev *dev)
 {
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	mfc_clean_dev_int_flags(dev);
 	mfc_cmd_host2risc(dev, MFC_REG_H2R_CMD_WAKEUP);
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 /* Open a new instance and get its number */
@@ -86,21 +87,19 @@ void mfc_cmd_open_inst(struct mfc_ctx *ctx)
 	if (ctx->otf_handle) {
 		/* Set OTF_CONTROL[2:1], 0: Non-OTF, 1: OTF+HWFC, 2: OTF only */
 		reg |= (0x1 << 1);
-		mfc_info_ctx("[OTF] HWFC + OTF enabled\n");
+		mfc_ctx_info("[OTF] HWFC + OTF enabled\n");
 		if (otf_dump && !ctx->is_drm) {
 			/* Set OTF_DEBUG[3] for OTF path dump */
 			reg |= (0x1 << 3);
-			mfc_info_ctx("[OTF] Debugging mode enabled\n");
+			mfc_ctx_info("[OTF] Debugging mode enabled\n");
 		}
 	}
 	MFC_WRITEL(reg, MFC_REG_CODEC_CONTROL);
 
 	mfc_debug(2, "Requested codec mode: %d\n", ctx->codec_mode);
 	reg = ctx->codec_mode & MFC_REG_CODEC_TYPE_MASK;
-	if (MFC_FEATURE_SUPPORT(dev, dev->pdata->mem_clear)) {
-		reg |= (0x1 << MFC_REG_CLEAR_CTX_MEM_SHIFT);
-		mfc_debug(2, "Enable to clear context memory: %#x\n", reg);
-	}
+	reg |= (0x1 << MFC_REG_CLEAR_CTX_MEM_SHIFT);
+	mfc_debug(2, "Enable to clear context memory: %#x\n", reg);
 	MFC_WRITEL(reg, MFC_REG_CODEC_TYPE);
 
 	MFC_WRITEL(ctx->instance_ctx_buf.daddr, MFC_REG_CONTEXT_MEM_ADDR);
@@ -124,7 +123,7 @@ int mfc_cmd_close_inst(struct mfc_ctx *ctx)
 	mfc_debug(2, "Returning instance number\n");
 	mfc_clean_ctx_int_flags(ctx);
 	if (ctx->state == MFCINST_FREE) {
-		mfc_err_ctx("ctx already free status\n");
+		mfc_ctx_err("ctx already free status\n");
 		return -EINVAL;
 	}
 
@@ -152,7 +151,7 @@ void mfc_cmd_dpb_flush(struct mfc_ctx *ctx)
 	struct mfc_dev *dev = ctx->dev;
 
 	if (ON_RES_CHANGE(ctx))
-		mfc_err_ctx("dpb flush on res change(state:%d)\n", ctx->state);
+		mfc_ctx_err("dpb flush on res change(state:%d)\n", ctx->state);
 
 	mfc_clean_ctx_int_flags(ctx);
 
@@ -215,7 +214,7 @@ void mfc_cmd_dec_seq_header(struct mfc_ctx *ctx)
 	reg |= (0x1 << MFC_REG_D_DEC_OPT_SPECIAL_PARSING_SHIFT);
 
 	/* Enabe decoding order */
-	if (dec->decoding_order)
+	if (dec->decoding_order || (feature_option & MFC_OPTION_DECODING_ORDER))
 		reg |= (0x1 << MFC_REG_D_DEC_OPT_DECODING_ORDER_ENABLE);
 
 	MFC_WRITEL(reg, MFC_REG_D_DEC_OPTIONS);
@@ -251,7 +250,8 @@ void mfc_cmd_dec_seq_header(struct mfc_ctx *ctx)
 	if (sfr_dump & MFC_DUMP_DEC_SEQ_START)
 		call_dop(dev, dump_regs, dev);
 
-	if (dec->crc_enable && dev->pdata->support_sbwc && IS_SBWC_FMT(ctx->dst_fmt))
+	if (dec->crc_enable && dev->pdata->support_sbwc &&
+			IS_SBWC_FMT(ctx->dst_fmt))
 		MFC_WRITEL(0x2, MFC_REG_DBG_INFO_ENABLE);
 
 	mfc_cmd_host2risc(dev, MFC_REG_H2R_CMD_SEQ_HEADER);
@@ -297,7 +297,7 @@ int mfc_cmd_dec_init_buffers(struct mfc_ctx *ctx)
 	mfc_clean_ctx_int_flags(ctx);
 	ret = mfc_set_dec_codec_buffers(ctx);
 	if (ret) {
-		mfc_info_ctx("isn't enough codec buffer size, re-alloc!\n");
+		mfc_ctx_info("isn't enough codec buffer size, re-alloc!\n");
 
 		if (dev->has_mmcache && dev->mmcache.is_on_status)
 			mfc_invalidate_mmcache(dev);
@@ -305,17 +305,25 @@ int mfc_cmd_dec_init_buffers(struct mfc_ctx *ctx)
 		if (dev->has_llc && dev->llc_on_status)
 			mfc_llc_flush(dev);
 
+		if (dev->has_slc && dev->slc_on_status)
+			mfc_slc_flush(dev);
+
 		mfc_release_codec_buffers(ctx);
 		ret = mfc_alloc_codec_buffers(ctx);
 		if (ret) {
-			mfc_err_ctx("Failed to allocate decoding buffers\n");
+			mfc_ctx_err("Failed to allocate decoding buffers\n");
 			return ret;
 		}
 		ret = mfc_set_dec_codec_buffers(ctx);
 		if (ret) {
-			mfc_err_ctx("Failed to alloc frame mem\n");
+			mfc_ctx_err("Failed to alloc frame mem\n");
 			return ret;
 		}
+	}
+
+	if (dev->has_slc && dev->slc_on_status) {
+		MFC_WRITEL(0x4055100, MFC_REG_D_AXI_RD_ATTR0_SLC);
+		MFC_WRITEL(0x4055100, MFC_REG_D_AXI_WR_ATTR0_SLC);
 	}
 
 	MFC_WRITEL(ctx->inst_no, MFC_REG_INSTANCE_ID);
@@ -338,10 +346,10 @@ int mfc_cmd_enc_init_buffers(struct mfc_ctx *ctx)
 	 * First set the reference frame buffers
 	 */
 	if (!ctx->codec_buffer_allocated) {
-		mfc_info_ctx("there isn't codec buffer, re-alloc!\n");
+		mfc_ctx_info("there isn't codec buffer, re-alloc!\n");
 		ret = mfc_alloc_codec_buffers(ctx);
 		if (ret) {
-			mfc_err_ctx("Failed to allocate encoding buffers\n");
+			mfc_ctx_err("Failed to allocate encoding buffers\n");
 			return ret;
 		}
 	}
@@ -349,7 +357,7 @@ int mfc_cmd_enc_init_buffers(struct mfc_ctx *ctx)
 	mfc_clean_ctx_int_flags(ctx);
 	ret = mfc_set_enc_codec_buffers(ctx);
 	if (ret) {
-		mfc_info_ctx("isn't enough codec buffer size, re-alloc!\n");
+		mfc_ctx_info("isn't enough codec buffer size, re-alloc!\n");
 
 		if (dev->has_mmcache && dev->mmcache.is_on_status)
 			mfc_invalidate_mmcache(dev);
@@ -357,17 +365,25 @@ int mfc_cmd_enc_init_buffers(struct mfc_ctx *ctx)
 		if (dev->has_llc && dev->llc_on_status)
 			mfc_llc_flush(dev);
 
+		if (dev->has_slc && dev->slc_on_status)
+			mfc_slc_flush(dev);
+
 		mfc_release_codec_buffers(ctx);
 		ret = mfc_alloc_codec_buffers(ctx);
 		if (ret) {
-			mfc_err_ctx("Failed to allocate encoding buffers\n");
+			mfc_ctx_err("Failed to allocate encoding buffers\n");
 			return ret;
 		}
 		ret = mfc_set_enc_codec_buffers(ctx);
 		if (ret) {
-			mfc_err_ctx("Failed to set enc codec buffers\n");
+			mfc_ctx_err("Failed to set enc codec buffers\n");
 			return ret;
 		}
+	}
+
+	if (dev->has_slc && dev->slc_on_status) {
+		MFC_WRITEL(0x4055100, MFC_REG_E_AXI_RD_ATTR0_SLC);
+		MFC_WRITEL(0x4055100, MFC_REG_E_AXI_WR_ATTR0_SLC);
 	}
 
 	MFC_WRITEL(ctx->inst_no, MFC_REG_INSTANCE_ID);
@@ -393,9 +409,12 @@ int __mfc_set_scratch_dpb_buffer(struct mfc_ctx *ctx)
 	if (dev->has_llc && dev->llc_on_status)
 		mfc_llc_flush(dev);
 
+	if (dev->has_slc && dev->slc_on_status)
+		mfc_slc_flush(dev);
+
 	ret = mfc_alloc_scratch_buffer(ctx);
 	if (ret) {
-		mfc_err_ctx("Failed to allocate scratch buffers\n");
+		mfc_ctx_err("Failed to allocate scratch buffers\n");
 		return ret;
 	}
 
@@ -405,16 +424,21 @@ int __mfc_set_scratch_dpb_buffer(struct mfc_ctx *ctx)
 	for (i = 0; i < raw->num_planes; i++) {
 		mfc_debug(2, "[FRAME] buf[%d] size: %d, stride: %d\n",
 				i, raw->plane_size[i], raw->stride[i]);
-		MFC_WRITEL(raw->plane_size[i], MFC_REG_D_FIRST_PLANE_DPB_SIZE + (i * 4));
+		MFC_WRITEL(raw->plane_size[i],
+			MFC_REG_D_FIRST_PLANE_DPB_SIZE + (i * 4));
 		MFC_WRITEL(ctx->raw_buf.stride[i],
-				MFC_REG_D_FIRST_PLANE_DPB_STRIDE_SIZE + (i * 4));
+			MFC_REG_D_FIRST_PLANE_DPB_STRIDE_SIZE + (i * 4));
 		if (IS_2BIT_NEED(ctx)) {
-			MFC_WRITEL(raw->stride_2bits[i], MFC_REG_D_FIRST_PLANE_2BIT_DPB_STRIDE_SIZE + (i * 4));
-			MFC_WRITEL(raw->plane_size_2bits[i], MFC_REG_D_FIRST_PLANE_2BIT_DPB_SIZE + (i * 4));
+			MFC_WRITEL(raw->stride_2bits[i],
+				MFC_REG_D_FIRST_PLANE_2BIT_DPB_STRIDE_SIZE +
+				(i * 4));
+			MFC_WRITEL(raw->plane_size_2bits[i],
+				MFC_REG_D_FIRST_PLANE_2BIT_DPB_SIZE + (i * 4));
 			mfc_debug(2, "[FRAME]%s%s 2bits buf[%d] size: %d, stride: %d\n",
 					(ctx->is_10bit ? "[10BIT]" : ""),
 					(ctx->is_sbwc ? "[SBWC]" : ""),
-					i, raw->plane_size_2bits[i], raw->stride_2bits[i]);
+					i, raw->plane_size_2bits[i],
+					raw->stride_2bits[i]);
 		}
 	}
 
@@ -436,7 +460,8 @@ int mfc_cmd_dec_one_frame(struct mfc_ctx *ctx, int last_frame)
 	int ret = 0;
 
 	mfc_debug(2, "[DPB] set dpb: %#lx, used: %#lx, available: %#lx\n",
-			dec->dynamic_set, dec->dynamic_used, dec->available_dpb);
+			dec->dynamic_set, dec->dynamic_used,
+			dec->available_dpb);
 
 	reg = MFC_READL(MFC_REG_D_NAL_START_OPTIONS);
 	reg &= ~(0x1 << MFC_REG_D_NAL_START_OPT_BLACK_BAR_SHIFT);
@@ -455,10 +480,14 @@ int mfc_cmd_dec_one_frame(struct mfc_ctx *ctx, int last_frame)
 	MFC_WRITEL(reg, MFC_REG_D_NAL_START_OPTIONS);
 	mfc_debug(3, "[BLACKBAR] black bar detect set: %#x\n", reg);
 
-	MFC_WRITEL(mfc_get_lower(dec->dynamic_set), MFC_REG_D_DYNAMIC_DPB_FLAG_LOWER);
-	MFC_WRITEL(mfc_get_upper(dec->dynamic_set), MFC_REG_D_DYNAMIC_DPB_FLAG_UPPER);
-	MFC_WRITEL(mfc_get_lower(dec->available_dpb), MFC_REG_D_AVAILABLE_DPB_FLAG_LOWER);
-	MFC_WRITEL(mfc_get_upper(dec->available_dpb), MFC_REG_D_AVAILABLE_DPB_FLAG_UPPER);
+	MFC_WRITEL(mfc_get_lower(dec->dynamic_set),
+			MFC_REG_D_DYNAMIC_DPB_FLAG_LOWER);
+	MFC_WRITEL(mfc_get_upper(dec->dynamic_set),
+			MFC_REG_D_DYNAMIC_DPB_FLAG_UPPER);
+	MFC_WRITEL(mfc_get_lower(dec->available_dpb),
+			MFC_REG_D_AVAILABLE_DPB_FLAG_LOWER);
+	MFC_WRITEL(mfc_get_upper(dec->available_dpb),
+			MFC_REG_D_AVAILABLE_DPB_FLAG_UPPER);
 
 	MFC_WRITEL(dec->slice_enable, MFC_REG_D_SLICE_IF_ENABLE);
 	MFC_WRITEL(MFC_TIMEOUT_VALUE, MFC_REG_DEC_TIMEOUT_VALUE);

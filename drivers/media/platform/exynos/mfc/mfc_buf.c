@@ -25,7 +25,7 @@ static void __mfc_alloc_common_context(struct mfc_dev *dev,
 	int firmware_size;
 	unsigned long fw_daddr;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	ctx_buf = &dev->common_ctx_buf;
 	fw_daddr = dev->fw_buf.daddr;
@@ -43,7 +43,7 @@ static void __mfc_alloc_common_context(struct mfc_dev *dev,
 	ctx_buf->vaddr = NULL;
 	ctx_buf->daddr = fw_daddr + firmware_size;
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 }
 
 /* Wrapper : allocate context buffers for SYS_INIT */
@@ -129,7 +129,8 @@ int mfc_alloc_instance_context(struct mfc_ctx *ctx)
 		break;
 	default:
 		ctx->instance_ctx_buf.size = 0;
-		mfc_err_ctx("Codec type(%d) should be checked!\n", ctx->codec_mode);
+		mfc_ctx_err("Codec type(%d) should be checked!\n",
+				ctx->codec_mode);
 		return -ENOMEM;
 	}
 
@@ -139,7 +140,7 @@ int mfc_alloc_instance_context(struct mfc_ctx *ctx)
 		ctx->instance_ctx_buf.buftype = MFCBUF_NORMAL;
 
 	if (mfc_mem_ion_alloc(dev, &ctx->instance_ctx_buf)) {
-		mfc_err_ctx("Allocating context buffer failed\n");
+		mfc_ctx_err("Allocating context buffer failed\n");
 		return -ENOMEM;
 	}
 
@@ -225,7 +226,7 @@ static void __mfc_dec_calc_codec_buffer_size(struct mfc_ctx *ctx)
 		break;
 	default:
 		ctx->codec_buf.size = 0;
-		mfc_err_ctx("invalid codec type: %d\n", ctx->codec_mode);
+		mfc_ctx_err("invalid codec type: %d\n", ctx->codec_mode);
 		break;
 	}
 
@@ -242,6 +243,7 @@ static void __mfc_enc_calc_codec_buffer_size(struct mfc_ctx *ctx)
 	struct mfc_enc *enc;
 	unsigned int mb_width, mb_height;
 	unsigned int lcu_width = 0, lcu_height = 0;
+	int width = ctx->crop_width, height = ctx->crop_height;
 
 	enc = ctx->enc_priv;
 	enc->tmv_buffer_size = 0;
@@ -252,18 +254,25 @@ static void __mfc_enc_calc_codec_buffer_size(struct mfc_ctx *ctx)
 	lcu_width = ENC_LCU_WIDTH(ctx->crop_width);
 	lcu_height = ENC_LCU_HEIGHT(ctx->crop_height);
 
-	if (IS_SBWC_DPB(ctx) && ctx->is_10bit) {
-		enc->luma_dpb_size = ENC_SBWC_LUMA_10B_DPB_SIZE(ctx->crop_width, ctx->crop_height);
-		enc->chroma_dpb_size = ENC_SBWC_CHROMA_10B_DPB_SIZE(ctx->crop_width, ctx->crop_height);
-	} else if (IS_SBWC_DPB(ctx) && !ctx->is_10bit) {
-		enc->luma_dpb_size = ENC_SBWC_LUMA_8B_DPB_SIZE(ctx->crop_width, ctx->crop_height);
-		enc->chroma_dpb_size = ENC_SBWC_CHROMA_8B_DPB_SIZE(ctx->crop_width, ctx->crop_height);
-	} else {
-		/* default recon buffer size, it can be changed in case of 422, 10bit */
+	if (IS_COMPRESS_DPB(ctx) && ctx->is_10bit) {
 		enc->luma_dpb_size =
-			ALIGN(ENC_LUMA_DPB_SIZE(ctx->crop_width, ctx->crop_height), 64);
+			ENC_SBWC_LUMA_10B_DPB_SIZE(width, height);
 		enc->chroma_dpb_size =
-			ALIGN(ENC_CHROMA_DPB_SIZE(ctx->crop_width, ctx->crop_height), 64);
+			ENC_SBWC_CHROMA_10B_DPB_SIZE(width, height);
+	} else if (IS_COMPRESS_DPB(ctx) && !ctx->is_10bit) {
+		enc->luma_dpb_size =
+			ENC_SBWC_LUMA_8B_DPB_SIZE(width, height);
+		enc->chroma_dpb_size =
+			ENC_SBWC_CHROMA_8B_DPB_SIZE(width, height);
+	} else {
+		/*
+		 * default recon buffer size,
+		 * it can be changed in case of 422, 10bit
+		 */
+		enc->luma_dpb_size =
+			ALIGN(ENC_LUMA_DPB_SIZE(width, height), 64);
+		enc->chroma_dpb_size =
+			ALIGN(ENC_CHROMA_DPB_SIZE(width, height), 64);
 	}
 
 	/* Codecs have different memory requirements */
@@ -300,7 +309,7 @@ static void __mfc_enc_calc_codec_buffer_size(struct mfc_ctx *ctx)
 			enc->chroma_dpb_size + enc->me_buffer_size));
 		break;
 	case MFC_REG_CODEC_VP9_ENC:
-		if (!IS_SBWC_DPB(ctx) && (ctx->is_10bit || ctx->is_422)) {
+		if (!IS_COMPRESS_DPB(ctx) && (ctx->is_10bit || ctx->is_422)) {
 			enc->luma_dpb_size =
 				ALIGN(ENC_VP9_LUMA_DPB_10B_SIZE(ctx->crop_width, ctx->crop_height), 64);
 			enc->chroma_dpb_size =
@@ -319,7 +328,7 @@ static void __mfc_enc_calc_codec_buffer_size(struct mfc_ctx *ctx)
 		break;
 	case MFC_REG_CODEC_HEVC_ENC:
 	case MFC_REG_CODEC_BPG_ENC:
-		if (!IS_SBWC_DPB(ctx) && (ctx->is_10bit || ctx->is_422)) {
+		if (!IS_COMPRESS_DPB(ctx) && (ctx->is_10bit || ctx->is_422)) {
 			enc->luma_dpb_size =
 				ALIGN(ENC_HEVC_LUMA_DPB_10B_SIZE(ctx->crop_width, ctx->crop_height), 64);
 			enc->chroma_dpb_size =
@@ -338,7 +347,7 @@ static void __mfc_enc_calc_codec_buffer_size(struct mfc_ctx *ctx)
 		break;
 	default:
 		ctx->codec_buf.size = 0;
-		mfc_err_ctx("invalid codec type: %d\n", ctx->codec_mode);
+		mfc_ctx_err("invalid codec type: %d\n", ctx->codec_mode);
 		break;
 	}
 
@@ -360,7 +369,7 @@ int mfc_alloc_codec_buffers(struct mfc_ctx *ctx)
 	} else if (ctx->type == MFCINST_ENCODER) {
 		__mfc_enc_calc_codec_buffer_size(ctx);
 	} else {
-		mfc_err_ctx("invalid type: %d\n", ctx->type);
+		mfc_ctx_err("invalid type: %d\n", ctx->type);
 		return -EINVAL;
 	}
 
@@ -371,7 +380,7 @@ int mfc_alloc_codec_buffers(struct mfc_ctx *ctx)
 
 	if (ctx->codec_buf.size > 0) {
 		if (mfc_mem_ion_alloc(dev, &ctx->codec_buf)) {
-			mfc_err_ctx("Allocating codec buffer failed\n");
+			mfc_ctx_err("Allocating codec buffer failed\n");
 			return -ENOMEM;
 		}
 		ctx->codec_buffer_allocated = 1;
@@ -406,7 +415,8 @@ int mfc_alloc_scratch_buffer(struct mfc_ctx *ctx)
 	if (ctx->scratch_buffer_allocated) {
 		mfc_mem_ion_free(dev, &ctx->scratch_buf);
 		ctx->scratch_buffer_allocated = 0;
-		mfc_debug(2, "[MEMINFO] Release the scratch buffer ctx[%d]\n", ctx->num);
+		mfc_debug(2, "[MEMINFO] Release the scratch buffer ctx[%d]\n",
+							ctx->num);
 	}
 
 	if (ctx->is_drm)
@@ -417,14 +427,15 @@ int mfc_alloc_scratch_buffer(struct mfc_ctx *ctx)
 	ctx->scratch_buf.size =  ALIGN(ctx->scratch_buf_size, 256);
 	if (ctx->scratch_buf.size > 0) {
 		if (mfc_mem_ion_alloc(dev, &ctx->scratch_buf)) {
-			mfc_err_ctx("Allocating scratch_buf buffer failed\n");
+			mfc_ctx_err("Allocating scratch_buf buffer failed\n");
 			return -ENOMEM;
 		}
 		ctx->scratch_buffer_allocated = 1;
 	}
 
 	mfc_debug(2, "[MEMINFO] scratch buf ctx[%d] size: %ld, addr: 0x%08llx\n",
-			ctx->num, ctx->scratch_buf_size, ctx->scratch_buf.daddr);
+			ctx->num, ctx->scratch_buf_size,
+			ctx->scratch_buf.daddr);
 
 	mfc_debug_leave();
 	return 0;
@@ -438,7 +449,8 @@ void mfc_release_scratch_buffer(struct mfc_ctx *ctx)
 	if (ctx->scratch_buffer_allocated) {
 		mfc_mem_ion_free(dev, &ctx->scratch_buf);
 		ctx->scratch_buffer_allocated = 0;
-		mfc_debug(2, "[MEMINFO] Release the scratch buffer ctx[%d]\n", ctx->num);
+		mfc_debug(2, "[MEMINFO] Release the scratch buffer ctx[%d]\n",
+							ctx->num);
 	}
 	mfc_debug_leave();
 }
@@ -448,15 +460,15 @@ int mfc_alloc_dbg_info_buffer(struct mfc_dev *dev)
 {
 	struct mfc_ctx_buf_size *buf_size = dev->variant->buf_size->ctx_buf;
 
-	mfc_debug_dev(2, "Allocate a debug-info buffer\n");
+	mfc_dev_debug(2, "Allocate a debug-info buffer\n");
 
 	dev->dbg_info_buf.buftype = MFCBUF_NORMAL;
 	dev->dbg_info_buf.size = buf_size->dbg_info_buf;
 	if (mfc_mem_ion_alloc(dev, &dev->dbg_info_buf)) {
-		mfc_err_dev("Allocating debug info buffer failed\n");
+		mfc_dev_err("Allocating debug info buffer failed\n");
 		return -ENOMEM;
 	}
-	mfc_debug_dev(2, "[MEMINFO] debug info buf size: %ld, daddr: 0x%08llx, vaddr: 0x%p\n",
+	mfc_dev_debug(2, "[MEMINFO] debug info buf size: %ld, daddr: 0x%08llx, vaddr: 0x%p\n",
 			dev->dbg_info_buf.size, dev->dbg_info_buf.daddr, dev->dbg_info_buf.vaddr);
 
 	return 0;
@@ -466,15 +478,15 @@ int mfc_alloc_dbg_info_buffer(struct mfc_dev *dev)
 void mfc_release_dbg_info_buffer(struct mfc_dev *dev)
 {
 	if (!dev->dbg_info_buf.dma_buf)
-		mfc_debug_dev(2, "debug info buffer is already freed\n");
+		mfc_dev_debug(2, "debug info buffer is already freed\n");
 
 	mfc_mem_ion_free(dev, &dev->dbg_info_buf);
-	mfc_debug_dev(2, "[MEMINFO] Release the debug info buffer\n");
+	mfc_dev_debug(2, "[MEMINFO] Release the debug info buffer\n");
 }
 
 /* Allocation buffer of ROI macroblock information */
 static int __mfc_alloc_enc_roi_buffer(struct mfc_ctx *ctx, size_t size,
-					struct mfc_special_buf *roi_buf)
+				struct mfc_special_buf *roi_buf)
 {
 	struct mfc_dev *dev = ctx->dev;
 
@@ -483,12 +495,13 @@ static int __mfc_alloc_enc_roi_buffer(struct mfc_ctx *ctx, size_t size,
 
 	if (roi_buf->dma_buf == NULL) {
 		if (mfc_mem_ion_alloc(dev, roi_buf)) {
-			mfc_err_ctx("[ROI] Allocating ROI buffer failed\n");
+			mfc_ctx_err("[ROI] Allocating ROI buffer failed\n");
 			return -ENOMEM;
 		}
 	}
 	mfc_debug(2, "[MEMINFO][ROI] roi buf ctx[%d] size: %ld, daddr: 0x%08llx, vaddr: 0x%p\n",
-			ctx->num, roi_buf->size, roi_buf->daddr, roi_buf->vaddr);
+			ctx->num, roi_buf->size,
+			roi_buf->daddr, roi_buf->vaddr);
 
 	memset(roi_buf->vaddr, 0, roi_buf->size);
 
@@ -502,14 +515,14 @@ int mfc_alloc_enc_roi_buffer(struct mfc_ctx *ctx)
 	unsigned int mb_width, mb_height;
 	unsigned int lcu_width = 0, lcu_height = 0;
 	size_t size;
-	int i;
+	int i, ret;
 
 	mb_width = WIDTH_MB(ctx->crop_width);
 	mb_height = HEIGHT_MB(ctx->crop_height);
 
 	switch (ctx->codec_mode) {
 	case MFC_REG_CODEC_H264_ENC:
-		size = ((((mb_width * (mb_height + 1) / 2) + 15) / 16) * 16) * 2;
+		size = (((mb_width * (mb_height + 1) / 2) + 15) / 16) * 16 * 2;
 		break;
 	case MFC_REG_CODEC_MPEG4_ENC:
 	case MFC_REG_CODEC_VP8_ENC:
@@ -533,9 +546,11 @@ int mfc_alloc_enc_roi_buffer(struct mfc_ctx *ctx)
 	}
 
 	for (i = 0; i < MFC_MAX_EXTRA_BUF; i++) {
-		if (__mfc_alloc_enc_roi_buffer(ctx, size, &enc->roi_buf[i]) < 0) {
-			mfc_err_ctx("[ROI] Allocating remapping buffer[%d] failed\n", i);
-			return -ENOMEM;
+		ret = __mfc_alloc_enc_roi_buffer(ctx, size, &enc->roi_buf[i]);
+		if (ret < 0) {
+			mfc_ctx_err("[ROI] Allocating remapping buffer[%d] failed\n",
+					i);
+			return ret;
 		}
 	}
 
@@ -571,7 +586,7 @@ int mfc_otf_alloc_stream_buf(struct mfc_ctx *ctx)
 		buf->buftype = MFCBUF_NORMAL;
 		buf->size = raw->total_plane_size;
 		if (mfc_mem_ion_alloc(dev, buf)) {
-			mfc_err_ctx("[OTF] Allocating stream buffer failed\n");
+			mfc_ctx_err("[OTF] Allocating stream buffer failed\n");
 			return -EINVAL;
 		}
 		mfc_debug(2, "[OTF][MEMINFO] OTF stream buf[%d] size: %ld, daddr: 0x%08llx, vaddr: 0x%p\n",
@@ -610,7 +625,7 @@ int mfc_alloc_firmware(struct mfc_dev *dev)
 	size_t firmware_size;
 	struct mfc_ctx_buf_size *buf_size;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	buf_size = dev->variant->buf_size->ctx_buf;
 	firmware_size = dev->variant->buf_size->firmware_code;
@@ -619,17 +634,17 @@ int mfc_alloc_firmware(struct mfc_dev *dev)
 	if (dev->fw_buf.dma_buf)
 		return 0;
 
-	mfc_debug_dev(4, "[F/W] Allocating memory for firmware\n");
+	mfc_dev_debug(4, "[F/W] Allocating memory for firmware\n");
 	trace_mfc_loadfw_start(dev->fw.size, firmware_size);
 
 	dev->fw_buf.buftype = MFCBUF_NORMAL;
 	dev->fw_buf.size = dev->fw.size;
 	if (mfc_mem_ion_alloc(dev, &dev->fw_buf)) {
-		mfc_err_dev("[F/W] Allocating normal firmware buffer failed\n");
+		mfc_dev_err("[F/W] Allocating normal firmware buffer failed\n");
 		return -ENOMEM;
 	}
 
-	mfc_debug_dev(2, "[MEMINFO][F/W] FW normal: 0x%08llx (vaddr: 0x%p), size: %08zu\n",
+	mfc_dev_debug(2, "[MEMINFO][F/W] FW normal: 0x%08llx (vaddr: 0x%p), size: %08zu\n",
 			dev->fw_buf.daddr, dev->fw_buf.vaddr,
 			dev->fw_buf.size);
 
@@ -637,16 +652,16 @@ int mfc_alloc_firmware(struct mfc_dev *dev)
 	dev->drm_fw_buf.buftype = MFCBUF_DRM_FW;
 	dev->drm_fw_buf.size = dev->fw.size;
 	if (mfc_mem_ion_alloc(dev, &dev->drm_fw_buf)) {
-		mfc_err_dev("[F/W] Allocating DRM firmware buffer failed\n");
+		mfc_dev_err("[F/W] Allocating DRM firmware buffer failed\n");
 		return -ENOMEM;
 	}
 
-	mfc_debug_dev(2, "[MEMINFO][F/W] FW DRM: 0x%08llx (vaddr: 0x%p), size: %08zu\n",
+	mfc_dev_debug(2, "[MEMINFO][F/W] FW DRM: 0x%08llx (vaddr: 0x%p), size: %08zu\n",
 			dev->drm_fw_buf.daddr, dev->drm_fw_buf.vaddr,
 			dev->drm_fw_buf.size);
 #endif
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 
 	return 0;
 }
@@ -662,45 +677,46 @@ int mfc_load_firmware(struct mfc_dev *dev)
 
 	/* Firmare has to be present as a separate file or compiled
 	 * into kernel. */
-	mfc_debug_dev_enter();
-	mfc_debug_dev(4, "[F/W] Requesting F/W\n");
+	mfc_dev_debug_enter();
+	mfc_dev_debug(4, "[F/W] Requesting F/W\n");
 	err = request_firmware((const struct firmware **)&fw_blob,
 					MFC_FW_NAME, dev->v4l2_dev.dev);
 
 	if (err != 0) {
-		mfc_err_dev("[F/W] Couldn't find the F/W invalid path\n");
+		mfc_dev_err("[F/W] Couldn't find the F/W invalid path\n");
 		release_firmware(fw_blob);
 		return -EINVAL;
 	}
 
-	mfc_debug_dev(2, "[MEMINFO][F/W] loaded F/W Size: %zu\n", fw_blob->size);
+	mfc_dev_debug(2, "[MEMINFO][F/W] loaded F/W Size: %zu\n",
+						fw_blob->size);
 
 	if (fw_blob->size > firmware_size) {
-		mfc_err_dev("[MEMINFO][F/W] MFC firmware(%zu) is too big to be loaded in memory(%zu)\n",
+		mfc_dev_err("[MEMINFO][F/W] MFC firmware(%zu) is too big to be loaded in memory(%zu)\n",
 				fw_blob->size, firmware_size);
 		release_firmware(fw_blob);
 		return -ENOMEM;
 	}
 
 	if (dev->fw_buf.dma_buf == NULL || dev->fw_buf.daddr == 0) {
-		mfc_err_dev("[F/W] MFC firmware is not allocated or was not mapped correctly\n");
+		mfc_dev_err("[F/W] MFC firmware is not allocated or was not mapped correctly\n");
 		release_firmware(fw_blob);
 		return -EINVAL;
 	}
 
 	/*  This adds to clear with '0' for firmware memory except code region. */
-	mfc_debug_dev(4, "[F/W] memset before memcpy for normal fw\n");
+	mfc_dev_debug(4, "[F/W] memset before memcpy for normal fw\n");
 	memset((dev->fw_buf.vaddr + fw_blob->size), 0, (firmware_size - fw_blob->size));
 	memcpy(dev->fw_buf.vaddr, fw_blob->data, fw_blob->size);
 	if (dev->drm_fw_buf.vaddr) {
-		mfc_debug_dev(4, "[F/W] memset before memcpy for secure fw\n");
+		mfc_dev_debug(4, "[F/W] memset before memcpy for secure fw\n");
 		memset((dev->drm_fw_buf.vaddr + fw_blob->size), 0, (firmware_size - fw_blob->size));
 		memcpy(dev->drm_fw_buf.vaddr, fw_blob->data, fw_blob->size);
-		mfc_debug_dev(4, "[F/W] copy firmware to secure region\n");
+		mfc_dev_debug(4, "[F/W] copy firmware to secure region\n");
 	}
 	release_firmware(fw_blob);
 	trace_mfc_loadfw_end(dev->fw.size, firmware_size);
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 	return 0;
 }
 
@@ -710,7 +726,7 @@ int mfc_release_firmware(struct mfc_dev *dev)
 	/* Before calling this function one has to make sure
 	 * that MFC is no longer processing */
 	if (!dev->fw_buf.dma_buf) {
-		mfc_err_dev("[F/W] firmware memory is already freed\n");
+		mfc_dev_err("[F/W] firmware memory is already freed\n");
 		return -EINVAL;
 	}
 

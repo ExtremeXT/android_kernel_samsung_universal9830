@@ -33,7 +33,7 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 	int ret = 0;
 	int curr_ctx_is_drm_backup;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	curr_ctx_is_drm_backup = dev->curr_ctx_is_drm;
 
@@ -41,7 +41,7 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 		return -EINVAL;
 
 	/* 0. MFC reset */
-	mfc_debug_dev(2, "MFC reset...\n");
+	mfc_dev_debug(2, "MFC reset...\n");
 
 	/* At init time, do not call secure API */
 	if (buf_type == MFCBUF_NORMAL)
@@ -51,13 +51,13 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 
 	ret = mfc_pm_clock_on(dev);
 	if (ret) {
-		mfc_err_dev("Failed to enable clock before reset(%d)\n", ret);
+		mfc_dev_err("Failed to enable clock before reset(%d)\n", ret);
 		dev->curr_ctx_is_drm = curr_ctx_is_drm_backup;
 		return ret;
 	}
 
 	mfc_reset_mfc(dev);
-	mfc_debug_dev(2, "Done MFC reset...\n");
+	mfc_dev_debug(2, "Done MFC reset...\n");
 
 	/* 1. Set DRAM base Addr */
 	mfc_set_risc_base_addr(dev, buf_type);
@@ -65,9 +65,9 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 	/* 2. Release reset signal to the RISC */
 	mfc_risc_on(dev);
 
-	mfc_debug_dev(2, "Will now wait for completion of firmware transfer\n");
+	mfc_dev_debug(2, "Will now wait for completion of firmware transfer\n");
 	if (mfc_wait_for_done_dev(dev, MFC_REG_R2H_CMD_FW_STATUS_RET)) {
-		mfc_err_dev("Failed to RISC_ON\n");
+		mfc_dev_err("Failed to RISC_ON\n");
 		mfc_clean_dev_int_flags(dev);
 		ret = -EIO;
 		goto err_init_hw;
@@ -76,9 +76,9 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 	/* 3. Initialize firmware */
 	mfc_cmd_sys_init(dev, buf_type);
 
-	mfc_debug_dev(2, "Ok, now will write a command to init the system\n");
+	mfc_dev_debug(2, "Ok, now will write a command to init the system\n");
 	if (mfc_wait_for_done_dev(dev, MFC_REG_R2H_CMD_SYS_INIT_RET)) {
-		mfc_err_dev("Failed to SYS_INIT\n");
+		mfc_dev_err("Failed to SYS_INIT\n");
 		mfc_clean_dev_int_flags(dev);
 		ret = -EIO;
 		goto err_init_hw;
@@ -87,7 +87,7 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 	dev->int_condition = 0;
 	if (dev->int_err != 0 || dev->int_reason != MFC_REG_R2H_CMD_SYS_INIT_RET) {
 		/* Failure. */
-		mfc_err_dev("Failed to init firmware - error: %d, int: %d\n",
+		mfc_dev_err("Failed to init firmware - error: %d, int: %d\n",
 				dev->int_err, dev->int_reason);
 		ret = -EIO;
 		goto err_init_hw;
@@ -97,18 +97,18 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 	if (dev->fw.fimv_info != 'D' && dev->fw.fimv_info != 'E')
 		dev->fw.fimv_info = 'N';
 
-	mfc_info_dev("[F/W] MFC v%x, %02xyy %02xmm %02xdd (%c)\n",
-		 dev->pdata->ip_ver,
-		 mfc_get_fw_ver_year(),
-		 mfc_get_fw_ver_month(),
-		 mfc_get_fw_ver_date(),
-		 dev->fw.fimv_info);
+	mfc_dev_info("[F/W] MFC v%x, %02xyy %02xmm %02xdd (%c)\n",
+			dev->pdata->ip_ver,
+			mfc_get_fw_ver_year(),
+			mfc_get_fw_ver_month(),
+			mfc_get_fw_ver_date(),
+			dev->fw.fimv_info);
 
 	dev->fw.date = mfc_get_fw_ver_all();
 	/* Check MFC version and F/W version */
 	fw_ver = mfc_get_mfc_version();
 	if (fw_ver != dev->pdata->ip_ver) {
-		mfc_err_dev("Invalid F/W version(0x%x) for MFC H/W(0x%x)\n",
+		mfc_dev_err("Invalid F/W version(0x%x) for MFC H/W(0x%x)\n",
 				fw_ver, dev->pdata->ip_ver);
 		ret = -EIO;
 		goto err_init_hw;
@@ -118,7 +118,7 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 	/* Cache flush for base address change */
 	mfc_cmd_cache_flush(dev);
 	if (mfc_wait_for_done_dev(dev, MFC_REG_R2H_CMD_CACHE_FLUSH_RET)) {
-		mfc_err_dev("Failed to CACHE_FLUSH\n");
+		mfc_dev_err("Failed to CACHE_FLUSH\n");
 		mfc_clean_dev_int_flags(dev);
 		ret = -EIO;
 		goto err_init_hw;
@@ -134,7 +134,7 @@ static int __mfc_init_hw(struct mfc_dev *dev, enum mfc_buf_usage_type buf_type)
 err_init_hw:
 	mfc_pm_clock_off(dev);
 	dev->curr_ctx_is_drm = curr_ctx_is_drm_backup;
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 
 	return ret;
 }
@@ -161,11 +161,11 @@ void mfc_run_deinit_hw(struct mfc_dev *dev)
 {
 	int ret;
 
-	mfc_debug_dev(2, "mfc deinit start\n");
+	mfc_dev_debug(2, "mfc deinit start\n");
 
 	ret = mfc_pm_clock_on(dev);
 	if (ret) {
-		mfc_err_dev("Failed to enable clock before reset(%d)\n", ret);
+		mfc_dev_err("Failed to enable clock before reset(%d)\n", ret);
 		return;
 	}
 
@@ -173,7 +173,7 @@ void mfc_run_deinit_hw(struct mfc_dev *dev)
 
 	mfc_pm_clock_off(dev);
 
-	mfc_debug_dev(2, "mfc deinit completed\n");
+	mfc_dev_debug(2, "mfc deinit completed\n");
 }
 
 int mfc_run_sleep(struct mfc_dev *dev)
@@ -182,7 +182,7 @@ int mfc_run_sleep(struct mfc_dev *dev)
 	int i;
 	int need_cache_flush = 0;
 
-	mfc_debug_dev_enter();
+	mfc_dev_debug_enter();
 
 	ctx = dev->ctx[dev->curr_ctx];
 	if (!ctx) {
@@ -194,19 +194,20 @@ int mfc_run_sleep(struct mfc_dev *dev)
 		}
 
 		if (!ctx) {
-			mfc_err_dev("no mfc context to run\n");
+			mfc_dev_err("no mfc context to run\n");
 			return -EINVAL;
 		}
-		mfc_info_dev("ctx is changed %d -> %d\n", dev->curr_ctx, ctx->num);
+		mfc_dev_info("ctx is changed %d -> %d\n",
+				dev->curr_ctx, ctx->num);
 
 		dev->curr_ctx = ctx->num;
 		if (dev->curr_ctx_is_drm != ctx->is_drm) {
 			need_cache_flush = 1;
-			mfc_info_dev("DRM attribute is changed %d->%d\n",
+			mfc_dev_info("DRM attribute is changed %d->%d\n",
 					dev->curr_ctx_is_drm, ctx->is_drm);
 		}
 	}
-	mfc_info_ctx("curr_ctx_is_drm:%d\n", dev->curr_ctx_is_drm);
+	mfc_ctx_info("curr_ctx_is_drm:%d\n", dev->curr_ctx_is_drm);
 
 	mfc_pm_clock_on(dev);
 
@@ -216,7 +217,7 @@ int mfc_run_sleep(struct mfc_dev *dev)
 	mfc_cmd_sleep(dev);
 
 	if (mfc_wait_for_done_dev(dev, MFC_REG_R2H_CMD_SLEEP_RET)) {
-		mfc_err_dev("Failed to SLEEP\n");
+		mfc_dev_err("Failed to SLEEP\n");
 		dev->logging_data->cause |= (1 << MFC_CAUSE_FAIL_SLEEP);
 		call_dop(dev, dump_and_stop_always, dev);
 		return -EBUSY;
@@ -225,7 +226,7 @@ int mfc_run_sleep(struct mfc_dev *dev)
 	dev->int_condition = 0;
 	if (dev->int_err != 0 || dev->int_reason != MFC_REG_R2H_CMD_SLEEP_RET) {
 		/* Failure. */
-		mfc_err_dev("Failed to sleep - error: %d, int: %d\n",
+		mfc_dev_err("Failed to sleep - error: %d, int: %d\n",
 				dev->int_err, dev->int_reason);
 		call_dop(dev, dump_and_stop_always, dev);
 		return -EBUSY;
@@ -236,7 +237,7 @@ int mfc_run_sleep(struct mfc_dev *dev)
 	mfc_mfc_off(dev);
 	mfc_pm_clock_off(dev);
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 
 	return 0;
 }
@@ -246,20 +247,20 @@ int mfc_run_wakeup(struct mfc_dev *dev)
 	enum mfc_buf_usage_type buf_type;
 	int ret = 0;
 
-	mfc_debug_dev_enter();
-	mfc_info_dev("curr_ctx_is_drm:%d\n", dev->curr_ctx_is_drm);
+	mfc_dev_debug_enter();
+	mfc_dev_info("curr_ctx_is_drm:%d\n", dev->curr_ctx_is_drm);
 
 	/* 0. MFC reset */
-	mfc_debug_dev(2, "MFC reset...\n");
+	mfc_dev_debug(2, "MFC reset...\n");
 
 	ret = mfc_pm_clock_on(dev);
 	if (ret) {
-		mfc_err_dev("Failed to enable clock before reset(%d)\n", ret);
+		mfc_dev_err("Failed to enable clock before reset(%d)\n", ret);
 		return ret;
 	}
 
 	mfc_reset_mfc(dev);
-	mfc_debug_dev(2, "Done MFC reset...\n");
+	mfc_dev_debug(2, "Done MFC reset...\n");
 
 	if (dev->curr_ctx_is_drm)
 		buf_type = MFCBUF_DRM;
@@ -272,20 +273,20 @@ int mfc_run_wakeup(struct mfc_dev *dev)
 	/* 2. Release reset signal to the RISC */
 	mfc_risc_on(dev);
 
-	mfc_debug_dev(2, "Will now wait for completion of firmware transfer\n");
+	mfc_dev_debug(2, "Will now wait for completion of firmware transfer\n");
 	if (mfc_wait_for_done_dev(dev, MFC_REG_R2H_CMD_FW_STATUS_RET)) {
-		mfc_err_dev("Failed to RISC_ON\n");
+		mfc_dev_err("Failed to RISC_ON\n");
 		dev->logging_data->cause |= (1 << MFC_CAUSE_FAIL_RISC_ON);
 		call_dop(dev, dump_and_stop_always, dev);
 		return -EBUSY;
 	}
 
-	mfc_debug_dev(2, "Ok, now will write a command to wakeup the system\n");
+	mfc_dev_debug(2, "Ok, now will write a command to wakeup the system\n");
 	mfc_cmd_wakeup(dev);
 
-	mfc_debug_dev(2, "Will now wait for completion of firmware wake up\n");
+	mfc_dev_debug(2, "Will now wait for completion of firmware wake up\n");
 	if (mfc_wait_for_done_dev(dev, MFC_REG_R2H_CMD_WAKEUP_RET)) {
-		mfc_err_dev("Failed to WAKEUP\n");
+		mfc_dev_err("Failed to WAKEUP\n");
 		dev->logging_data->cause |= (1 << MFC_CAUSE_FAIL_WAKEUP);
 		call_dop(dev, dump_and_stop_always, dev);
 		return -EBUSY;
@@ -294,7 +295,7 @@ int mfc_run_wakeup(struct mfc_dev *dev)
 	dev->int_condition = 0;
 	if (dev->int_err != 0 || dev->int_reason != MFC_REG_R2H_CMD_WAKEUP_RET) {
 		/* Failure. */
-		mfc_err_dev("Failed to wakeup - error: %d, int: %d\n",
+		mfc_dev_err("Failed to wakeup - error: %d, int: %d\n",
 				dev->int_err, dev->int_reason);
 		call_dop(dev, dump_and_stop_always, dev);
 		return -EBUSY;
@@ -304,7 +305,7 @@ int mfc_run_wakeup(struct mfc_dev *dev)
 
 	mfc_pm_clock_off(dev);
 
-	mfc_debug_dev_leave();
+	mfc_dev_debug_leave();
 
 	return ret;
 }
@@ -319,7 +320,7 @@ int mfc_run_dec_init(struct mfc_ctx *ctx)
 	/* Get the next source buffer */
 	src_mb = mfc_get_buf(ctx, &ctx->src_buf_queue, MFC_BUF_NO_TOUCH_USED);
 	if (!src_mb) {
-		mfc_err_ctx("no src buffers\n");
+		mfc_ctx_err("no src buffers\n");
 		return -EAGAIN;
 	}
 
@@ -328,9 +329,11 @@ int mfc_run_dec_init(struct mfc_ctx *ctx)
 		src_mb->vb.vb2_buf.planes[0].bytesused, dec->consumed);
 
 	if (dec->consumed)
-		mfc_set_dec_stream_buffer(ctx, src_mb, dec->consumed, dec->remained_size);
+		mfc_set_dec_stream_buffer(ctx, src_mb, dec->consumed,
+				dec->remained_size);
 	else
-		mfc_set_dec_stream_buffer(ctx, src_mb, 0, src_mb->vb.vb2_buf.planes[0].bytesused);
+		mfc_set_dec_stream_buffer(ctx, src_mb, 0,
+				src_mb->vb.vb2_buf.planes[0].bytesused);
 
 	mfc_debug(2, "[BUFINFO] Header addr: 0x%08llx\n", src_mb->addr[0][0]);
 	mfc_clean_ctx_int_flags(ctx);
@@ -382,7 +385,8 @@ int mfc_run_dec_frame(struct mfc_ctx *ctx)
 
 	index = src_mb->vb.vb2_buf.index;
 	if (call_cop(ctx, set_buf_ctrls_val, ctx, &ctx->src_ctrls[index]) < 0)
-		mfc_err_ctx("failed in set_buf_ctrls_val\n");
+		mfc_ctx_err("failed in set_buf_ctrls_val\n");
+	mfc_update_tag(ctx, dec->stored_tag);
 
 	mfc_set_dynamic_dpb(ctx, dst_mb);
 
@@ -497,7 +501,8 @@ int mfc_run_enc_frame(struct mfc_ctx *ctx)
 		}
 
 		mfc_set_enc_src_sbwc(dev,
-			(is_uncomp ? MFC_ENC_SRC_SBWC_OFF : MFC_ENC_SRC_SBWC_ON));
+			(is_uncomp ?
+			 MFC_ENC_SRC_SBWC_OFF : MFC_ENC_SRC_SBWC_ON));
 		mfc_set_linear_stride_size(ctx,
 			(is_uncomp ? enc->uncomp_fmt : ctx->src_fmt));
 		mfc_set_enc_stride(ctx);
@@ -535,7 +540,7 @@ int mfc_run_enc_frame(struct mfc_ctx *ctx)
 	mfc_set_enc_stream_buffer(ctx, dst_mb);
 
 	if (call_cop(ctx, set_buf_ctrls_val, ctx, &ctx->src_ctrls[index]) < 0)
-		mfc_err_ctx("failed in set_buf_ctrls_val\n");
+		mfc_ctx_err("failed in set_buf_ctrls_val\n");
 
 	mfc_clean_ctx_int_flags(ctx);
 
@@ -544,7 +549,6 @@ int mfc_run_enc_frame(struct mfc_ctx *ctx)
 
 	if (!reg_test)
 		mfc_set_slice_mode(ctx);
-	mfc_set_enc_ts_delta(ctx);
 
 	mfc_cmd_enc_one_frame(ctx, last_frame);
 

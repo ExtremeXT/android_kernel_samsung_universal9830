@@ -45,7 +45,7 @@ static inline void mfc_perf_init(struct mfc_dev *dev)
 
 	__mfc_measure_init();
 
-	mfc_info_dev("MFC frequency : %ld\n", clk_get_rate(dev->pm.clock));
+	mfc_dev_info("MFC frequency : %ld\n", clk_get_rate(dev->pm.clock));
 }
 
 static inline void mfc_perf_cancel_drv_margin(struct mfc_dev *dev)
@@ -63,7 +63,8 @@ static inline void mfc_perf_measure_on(struct mfc_dev *dev)
 		diff = (dev->perf.end.tv_sec * 1000000 + dev->perf.end.tv_usec)
 			- (dev->perf.begin.tv_sec * 1000000 + dev->perf.begin.tv_usec);
 
-		mfc_info_dev("IRQ -> NAL_START time(ms) = %03d.%03d\n", diff / 1000, diff % 1000);
+		mfc_dev_info("IRQ -> NAL_START time(ms) = %03d.%03d\n",
+				diff / 1000, diff % 1000);
 
 		dev->perf.drv_margin = 0;
 	}
@@ -90,7 +91,7 @@ static inline void mfc_perf_measure_off(struct mfc_dev *dev)
 
 		__mfc_measure_store(dev, diff);
 
-		mfc_debug_dev(3, "uDECtype :%d, uENCtype :%d, codectype :%d\n",
+		mfc_dev_debug(3, "uDECtype :%d, uENCtype :%d, codectype :%d\n",
 			mfc_get_dec_frame_type(), mfc_get_enc_slice_type(), MFC_READL(MFC_REG_CODEC_TYPE));
 
 		dev->perf.drv_margin = 1;
