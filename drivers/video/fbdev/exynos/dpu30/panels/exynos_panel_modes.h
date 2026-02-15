@@ -14,7 +14,7 @@
 #ifndef __EXYNOS_PANEL_MODES_H__
 #define __EXYNOS_PANEL_MODES_H__
 
-#include <linux/panel_modes.h>
+#include "../panel_modes.h"
 #include "exynos_panel.h"
 
 #define EXYNOS_MODE_FMT    "%dx%d@%dHz(%dx%dmm)"

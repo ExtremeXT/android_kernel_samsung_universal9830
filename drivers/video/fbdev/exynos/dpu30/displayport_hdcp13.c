@@ -388,8 +388,8 @@ static int hdcp13_proceed_repeater(void)
 	u8 device_cnt = 0;
 	u8 offset = 0;
 	int ksv_read_size = 0;
-	u8 sha1_input_buf[KSV_SIZE * MAX_KSV_LIST_COUNT + BINFO_SIZE + M0_SIZE];
-	u8 v_value[SHA1_SIZE];
+	u8 sha1_input_buf[KSV_SIZE * MAX_KSV_LIST_COUNT + BINFO_SIZE + M0_SIZE] = {0,};
+	u8 v_value[SHA1_SIZE] = {0,};
 
 	displayport_info("[HDCP 1.3] HDCP repeater Start!!!\n");
 
@@ -474,7 +474,7 @@ static int hdcp13_proceed_repeater(void)
 
 		/* need calculation of V = SHA-1(KSV list || Binfo || M0) */
 		hdcp13_make_sha1_input_buf(sha1_input_buf, HDCP13_DPCD.HDCP13_BINFO, device_cnt);
-#if defined(CONFIG_EXYNOS_HDCP2)
+#if IS_ENABLED(CONFIG_EXYNOS_HDCP2)
 		hdcp_calc_sha1(v_value, sha1_input_buf, BINFO_SIZE + M0_SIZE + KSV_SIZE * device_cnt);
 #else
 		displayport_info("Not compiled EXYNOS_HDCP2 driver\n");

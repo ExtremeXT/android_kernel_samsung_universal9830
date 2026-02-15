@@ -13,7 +13,6 @@
 #include "../format.h"
 
 /******************* DECON CAL functions *************************/
-
 static int decon_reg_reset(u32 id)
 {
 	int tries;
@@ -1539,30 +1538,43 @@ static void decon_reg_set_win_bnd_function(u32 id, u32 win_idx,
 	int plane_a = regs->plane_alpha;
 	enum decon_blending blend = regs->blend;
 	enum decon_win_func pd_func = PD_FUNC_USER_DEFINED;
-	u8 alpha0 = plane_a;
-	u8 alpha1 = 0;
+	u8 alpha0 = 0xff;
+	u8 alpha1 = 0xff;
 	bool is_plane_a = false;
 	u32 af_d = BND_COEF_ONE, ab_d = BND_COEF_ZERO,
 		af_a = BND_COEF_ONE, ab_a = BND_COEF_ZERO;
 
-	if ((plane_a > 0) && (plane_a <= 0xff))
-		is_plane_a = true;
+	if (blend == DECON_BLENDING_NONE)
+		pd_func = PD_FUNC_COPY;
 
-	if ((blend == DECON_BLENDING_NONE) && is_plane_a) {
-		af_d = BND_COEF_PLNAE_ALPHA0;
-		ab_d = BND_COEF_ZERO;
-		af_a = BND_COEF_PLNAE_ALPHA0;
-		ab_a = BND_COEF_ZERO;
-	} else if (blend == DECON_BLENDING_COVERAGE) {
+	if ((plane_a >= 0) && (plane_a <= 0xff)) {
+		alpha0 = plane_a;
+		alpha1 = 0;
+		is_plane_a = true;
+	}
+
+	if ((blend == DECON_BLENDING_COVERAGE) && !is_plane_a) {
+		af_d = BND_COEF_AF;
+		ab_d = BND_COEF_1_M_AF;
+		af_a = BND_COEF_AF;
+		ab_a = BND_COEF_1_M_AF;
+	} else if ((blend == DECON_BLENDING_COVERAGE) && is_plane_a) {
 		af_d = BND_COEF_ALPHA_MULT;
 		ab_d = BND_COEF_1_M_ALPHA_MULT;
 		af_a = BND_COEF_ALPHA_MULT;
 		ab_a = BND_COEF_1_M_ALPHA_MULT;
-	} else if (blend == DECON_BLENDING_PREMULT) {
+	} else if ((blend == DECON_BLENDING_PREMULT) && !is_plane_a) {
+		af_d = BND_COEF_ONE;
+		ab_d = BND_COEF_1_M_AF;
+		af_a = BND_COEF_ONE;
+		ab_a = BND_COEF_1_M_AF;
+	} else if ((blend == DECON_BLENDING_PREMULT) && is_plane_a) {
 		af_d = BND_COEF_PLNAE_ALPHA0;
 		ab_d = BND_COEF_1_M_ALPHA_MULT;
 		af_a = BND_COEF_PLNAE_ALPHA0;
 		ab_a = BND_COEF_1_M_ALPHA_MULT;
+	} else if (blend == DECON_BLENDING_NONE) {
+		decon_dbg("%s:%d none blending mode\n", __func__, __LINE__);
 	} else {
 		decon_warn("%s:%d undefined blending mode\n",
 				__func__, __LINE__);
@@ -2296,7 +2308,7 @@ int decon_reg_check_global_limitation(struct decon_device *decon,
 		 */
 		if (config[i].compression && (config[i].src.w > 2048)) {
 			for (j = 0; j < MAX_DECON_WIN; j++) {
-				if (i == j || (config[i].channel >= ODMA_WB))
+				if (i == j)
 					continue;
 				/* channel means DPP channel number */
 				if ((config[j].state == DECON_WIN_STATE_BUFFER) &&
@@ -2324,8 +2336,9 @@ int decon_reg_check_global_limitation(struct decon_device *decon,
 				goto err;
 			}
 			/* 8-bit YUV */
-			if ((config[i].src.w > ROT_MAX_W) &&
-				(config[i].src.w * config[i].src.h > ROT_MAX_SZ)) {
+			/* TODO: config -> config[i] ? */
+			if ((config->src.w > ROT_MAX_W) &&
+				(config->src.w * config->src.h > ROT_MAX_SZ)) {
 				decon_err("Exceeded supporting ROT size!\n");
 				ret = -EPERM;
 				goto err;
@@ -2333,7 +2346,7 @@ int decon_reg_check_global_limitation(struct decon_device *decon,
 #endif
 
 			for (j = 0; j < MAX_DECON_WIN; j++) {
-				if (i == j || (config[i].channel >= ODMA_WB))
+				if (i == j)
 					continue;
 				if ((config[j].state == DECON_WIN_STATE_BUFFER) &&
 						(config[j].channel ==

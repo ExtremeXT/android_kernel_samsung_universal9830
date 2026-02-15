@@ -37,7 +37,7 @@ void dpu_sysreg_select_dphy_rst_control(void __iomem *sysreg, u32 dsim_id, u32 s
 
 /* DSIM control */
 void dsim_reg_preinit(u32 id);
-int dsim_reg_init(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *clks,
+void dsim_reg_init(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *clks,
 		bool panel_ctrl);
 void dsim_reg_start(u32 id);
 int dsim_reg_stop(u32 id, u32 lanes);
@@ -55,12 +55,11 @@ void dsim_reg_wr_tx_header(u32 id, u32 d_id, unsigned long d0, u32 d1, u32 bta);
 void dsim_reg_wr_tx_payload(u32 id, u32 payload);
 u32 dsim_reg_header_fifo_is_empty(u32 id);
 u32 dsim_reg_payload_fifo_is_empty(u32 id);
-bool dsim_reg_is_writable_ph_fifo_state(u32 id, u32 cmd_cnt);
+bool dsim_reg_is_writable_ph_fifo_state(u32 id);
 u32 dsim_reg_get_rx_fifo(u32 id);
 u32 dsim_reg_rx_fifo_is_empty(u32 id);
 int dsim_reg_rx_err_handler(u32 id, u32 rx_fifo);
 void dsim_reg_enable_packetgo(u32 id, u32 en);
-void dsim_reg_set_packetgo_ready(u32 id);
 
 int dsim_reg_get_linecount(u32 id, u32 mode);
 
@@ -84,11 +83,5 @@ enum dsim_datalane_status dsim_reg_get_datalane_status(u32 id);
 
 /* DSIM SFR dump */
 void __dsim_dump(u32 id, struct dsim_regs *regs);
-
-#ifdef CONFIG_SUPPORT_MCD_MOTTO_TUNE
-int dsim_reg_set_phy_swing_level(u32 id);
-int dsim_reg_set_phy_impedance_level(u32 id);
-int dsim_reg_set_phy_emphasis_value(u32 id);
-#endif
 
 #endif /* __SAMSUNG_DSIM_CAL_H__ */

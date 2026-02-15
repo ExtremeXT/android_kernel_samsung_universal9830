@@ -18,15 +18,22 @@
 #include "../disp_err.h"
 #include "../decon.h"
 #include "../dsim.h"
-#include "../../panel/panel.h"
-#include "../../panel/panel_drv.h"
+#include "../mcd_decon.h"
+#include "panel.h"
+#include "panel_drv.h"
+#include "panel_debug.h"
 #include "exynos_panel_drv.h"
 #include "exynos_panel.h"
+
+#ifdef CONFIG_PANEL_DISPLAY_MODE
 #include "exynos_panel_modes.h"
+#endif
 
 static DEFINE_MUTEX(cmd_lock);
 struct panel_state *panel_state;
 struct panel_mres *mres;
+
+static int common_panel_set_display_mode(struct exynos_panel_device *panel, void *data);
 
 static int panel_drv_ioctl(struct exynos_panel_device *panel, u32 cmd, void *arg)
 {
@@ -47,7 +54,7 @@ static int panel_drv_notify(struct v4l2_subdev *sd,
 	int ret;
 
 	if (notification != V4L2_DEVICE_NOTIFY_EVENT) {
-		panel_dbg("unknown event\n");
+		DPU_DEBUG_PANEL("%s: unknown event\n", __func__);
 		return -EINVAL;
 	}
 
@@ -56,7 +63,7 @@ static int panel_drv_notify(struct v4l2_subdev *sd,
 		ret = v4l2_subdev_call(sd, core, ioctl,
 				PANEL_IOC_EVT_FRAME_DONE, &ev->timestamp);
 		if (ret) {
-			panel_err("failed to notify FRAME_DONE\n");
+			DPU_ERR_PANEL("%s: failed to notify FRAME_DONE\n", __func__);
 			return ret;
 		}
 		break;
@@ -64,16 +71,16 @@ static int panel_drv_notify(struct v4l2_subdev *sd,
 		ret = v4l2_subdev_call(sd, core, ioctl,
 				PANEL_IOC_EVT_VSYNC, &ev->timestamp);
 		if (ret) {
-			panel_err("failed to notify VSYNC\n");
+			DPU_ERR_PANEL("%s: failed to notify VSYNC\n", __func__);
 			return ret;
 		}
 		break;
 	default:
-		panel_warn("unknown event type %d\n", ev->type);
+		DPU_ERR_PANEL("%s: unknown event type %d\n", __func__, ev->type);
 		break;
 	}
 
-	panel_dbg("event type %d timestamp %ld %ld nsec\n",
+	DPU_DEBUG_PANEL("%s: event type %d timestamp %ld %ld nsec\n", __func__,
 			ev->type, ev->timestamp.tv_sec,
 			ev->timestamp.tv_nsec);
 
@@ -87,7 +94,7 @@ static int common_panel_set_error_cb(struct exynos_panel_device *panel, void *ar
 	v4l2_set_subdev_hostdata(panel->panel_drv_sd, arg);
 	ret = panel_drv_ioctl(panel, PANEL_IOC_REG_RESET_CB, NULL);
 	if (ret) {
-		panel_err("failed to set panel error callback\n");
+		DPU_ERR_PANEL("%s: failed to set panel error callback\n", __func__);
 		return ret;
 	}
 
@@ -100,7 +107,7 @@ static int panel_drv_probe(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_DSIM_PROBE, (void *)&panel->id);
 	if (ret) {
-		panel_err("failed to panel dsim probe\n");
+		DPU_ERR_PANEL("%s: failed to panel dsim probe\n", __func__);
 		return ret;
 	}
 
@@ -113,14 +120,14 @@ static int panel_drv_get_state(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_GET_PANEL_STATE, NULL);
 	if (ret) {
-		panel_err("failed to get panel state");
+		DPU_ERR_PANEL("%s: failed to get panel state", __func__);
 		return ret;
 	}
 
 	panel_state = (struct panel_state *)
 		v4l2_get_subdev_hostdata(panel->panel_drv_sd);
 	if (IS_ERR_OR_NULL(panel_state)) {
-		panel_err("failed to get lcd information\n");
+		DPU_ERR_PANEL("%s: failed to get lcd information\n", __func__);
 		return -EINVAL;
 	}
 
@@ -141,14 +148,20 @@ static int panel_drv_get_panel_display_mode(struct exynos_panel_device *panel)
 	info = &panel->lcd_info;
 	ret = panel_drv_ioctl(panel, PANEL_IOC_GET_DISPLAY_MODE, NULL);
 	if (ret < 0) {
-		panel_err("failed to ioctl(PANEL_IOC_GET_DISPLAY_MODE)\n");
+		DPU_ERR_PANEL("%s: failed to ioctl(PANEL_IOC_GET_DISPLAY_MODE)\n", __func__);
 		return ret;
 	}
 
 	panel_modes = (struct panel_display_modes *)
 		v4l2_get_subdev_hostdata(panel->panel_drv_sd);
 	if (IS_ERR_OR_NULL(panel_modes)) {
-		panel_err("failed to get panel_display_modes using v4l2_subdev\n");
+		DPU_ERR_PANEL("%s: failed to get panel_display_modes using v4l2_subdev\n", __func__);
+		return -EINVAL;
+	}
+
+	if (!panel_modes->modes ||
+			panel_modes->num_modes <= panel_modes->native_mode) {
+		DPU_ERR_PANEL("%s: invalid panel_modes\n", __func__);
 		return -EINVAL;
 	}
 
@@ -156,7 +169,7 @@ static int panel_drv_get_panel_display_mode(struct exynos_panel_device *panel)
 	exynos_modes =
 		exynos_display_modes_create_from_panel_display_modes(panel, panel_modes);
 	if (!exynos_modes) {
-		panel_err("could not create exynos_display_modes\n");
+		DPU_ERR_PANEL("%s: could not create exynos_display_modes\n", __func__);
 		return -ENOMEM;
 	}
 
@@ -166,6 +179,9 @@ static int panel_drv_get_panel_display_mode(struct exynos_panel_device *panel)
 	 */
 	exynos_display_modes_update_panel_info(panel, exynos_modes);
 	info->panel_modes = panel_modes;
+	info->panel_mode_idx = panel_modes->native_mode;
+	info->cmd_lp_ref =
+		panel_modes->modes[panel_modes->native_mode]->cmd_lp_ref;
 
 	return ret;
 }
@@ -177,55 +193,57 @@ static int panel_drv_get_mres(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_GET_MRES, NULL);
 	if (ret) {
-		panel_err("failed to get panel mres");
+		DPU_ERR_PANEL("%s: failed to get panel mres", __func__);
 		return ret;
 	}
 
 	mres = (struct panel_mres *)
 		v4l2_get_subdev_hostdata(panel->panel_drv_sd);
 	if (IS_ERR_OR_NULL(mres)) {
-		panel_err("failed to get lcd information\n");
+		DPU_ERR_PANEL("%s: failed to get lcd information\n", __func__);
 		return -EINVAL;
 	}
 
 	return ret;
 }
 
-static int common_panel_vrr_changed(struct exynos_panel_device *panel, void *arg)
+static int common_panel_vrr_changed(void *data, void *arg)
 {
 	struct exynos_panel_info *lcd_info;
 	struct vrr_config_data *vrr_config;
-	struct decon_device *decon = get_decon_drvdata(0);
+	struct exynos_panel_device *panel = data;
+	struct panel_display_modes *panel_modes;
+	struct panel_display_mode *pdm;
 
-	if (!panel || !arg || !decon)
+#if !defined(CONFIG_UML)
+	if (!panel || !arg)
 		return -EINVAL;
-
-	lcd_info = &panel->lcd_info;
-	vrr_config = arg;
-
-	/*
-	 * decon->lcd_info->fps : panel's current fps setting
-	 * decon->lcd_info->req_vrr_fps : decon requested fps
-	 * decon->bts.next_fps : next_fps will be applied after 1-VSYNC and FrameStart
-	 * decon->bts.next_fps_vsync_count : timeline of next_fps will be applied.
-	 */
-#if defined(CONFIG_DECON_BTS_VRR_ASYNC)
-	if (lcd_info->fps == vrr_config->fps &&
-			vrr_config->fps < decon->bts.next_fps) {
-		decon->bts.next_fps = lcd_info->fps;
-		decon->bts.next_fps_vsync_count = decon->vsync.count + 1;
-		DPU_DEBUG_BTS("\tupdate next_fps(%d) next_fps_vsync_count(%llu)\n",
-				decon->bts.next_fps, decon->bts.next_fps_vsync_count);
-	}
+#else
+	if (!panel || !arg)
+		return -EINVAL;
 #endif
 
-	if (lcd_info->fps != vrr_config->fps ||
-		lcd_info->vrr_mode != vrr_config->mode)
-		panel_warn("[VRR] decon(%d%s) panel(%d%s) mismatch\n",
-				lcd_info->fps, EXYNOS_VRR_MODE_STR(lcd_info->vrr_mode),
+	lcd_info = &panel->lcd_info;
+	panel_modes = lcd_info->panel_modes;
+	vrr_config = arg;
+
+	if (!panel_modes->modes ||
+			panel_modes->num_modes <= panel_modes->native_mode) {
+		DPU_ERR_PANEL("%s: invalid panel_modes\n", __func__);
+		return -EINVAL;
+	}
+
+	pdm = panel_modes->modes[lcd_info->panel_mode_idx];
+	if (!pdm)
+		return -EINVAL;
+
+	if (pdm->panel_refresh_rate != vrr_config->fps ||
+		pdm->panel_refresh_mode != vrr_config->mode)
+		DPU_ERR_PANEL("%s: [VRR] decon(%d%s) panel(%d%s) mismatch\n", __func__,
+				pdm->panel_refresh_rate, EXYNOS_VRR_MODE_STR(pdm->panel_refresh_mode),
 				vrr_config->fps, EXYNOS_VRR_MODE_STR(vrr_config->mode));
 	else
-		panel_warn("[VRR] panel(%d%s) updated\n",
+		DPU_ERR_PANEL("%s: [VRR] panel(%d%s) updated\n", __func__,
 				vrr_config->fps, EXYNOS_VRR_MODE_STR(vrr_config->mode));
 
 	return 0;
@@ -242,7 +260,7 @@ static int panel_drv_set_vrr_cb(struct exynos_panel_device *panel)
 	v4l2_set_subdev_hostdata(panel->panel_drv_sd, &vrr_cb_info);
 	ret = panel_drv_ioctl(panel, PANEL_IOC_REG_VRR_CB, NULL);
 	if (ret < 0) {
-		panel_err("failed to set panel error callback\n");
+		DPU_ERR_PANEL("%s: failed to set panel error callback\n", __func__);
 		return ret;
 	}
 
@@ -252,28 +270,19 @@ static int panel_drv_set_vrr_cb(struct exynos_panel_device *panel)
 #define DSIM_TX_FLOW_CONTROL
 static void print_tx(u8 cmd_id, const u8 *cmd, int size)
 {
-	char data[128];
+	char data[256];
 	int i, len;
 	bool newline = false;
 
-	/*
 	len = snprintf(data, ARRAY_SIZE(data), "(%02X) ", cmd_id);
-	for (i = 0; i < min((int)size, 128); i++) {
-		len += snprintf(data + len, ARRAY_SIZE(data) - len,
-				"%02X ", cmd[i]);
-		panel_info("%s\n", data);
-	}
-	*/
-
-	len = snprintf(data, ARRAY_SIZE(data), "(%02X) ", cmd_id);
-	for (i = 0; i < min((int)size, 128); i++) {
+	for (i = 0; i < min((int)size, 256); i++) {
 		if (newline)
 			len += snprintf(data + len, ARRAY_SIZE(data) - len, "     ");
 		newline = (!((i + 1) % 16) || (i + 1 == size)) ? true : false;
 		len += snprintf(data + len, ARRAY_SIZE(data) - len,
 				"%02X%s", cmd[i], newline ? "\n" : " ");
 		if (newline) {
-			panel_info("%s", data);
+			DPU_INFO_PANEL("%s: %s", __func__, data);
 			len = 0;
 		}
 	}
@@ -281,14 +290,23 @@ static void print_tx(u8 cmd_id, const u8 *cmd, int size)
 
 static void print_rx(u8 addr, u8 *buf, int size)
 {
-	char data[128];
+	char data[256];
 	int i, len;
+	bool newline = false;
 
 	len = snprintf(data, ARRAY_SIZE(data), "(%02X) ", addr);
-	for (i = 0; i < min((int)size, 32); i++)
+	for (i = 0; i < min((int)size, 256); i++) {
+		if (newline)
+			len += snprintf(data + len, ARRAY_SIZE(data) - len, "	  ");
+		newline = (!((i + 1) % 16) || (i + 1 == size)) ? true : false;
 		len += snprintf(data + len, ARRAY_SIZE(data) - len,
 				"%02X ", buf[i]);
-	panel_info("%s\n", data);
+		if (newline) {
+			DPU_INFO_PANEL("%s: %s", __func__, data);
+			len = 0;
+		}
+	}
+	DPU_INFO_PANEL("%s: %s\n", __func__, data);
 }
 
 static void print_dsim_cmd(const struct exynos_dsim_cmd *cmd_set, int size)
@@ -310,7 +328,7 @@ static int mipi_write(u32 id, u8 cmd_id, const u8 *cmd, u32 offset, int size, u3
 	struct dsim_device *dsim = get_dsim_drvdata(id);
 
 	if (!cmd) {
-		panel_err("cmd is null\n");
+		DPU_ERR_PANEL("%s: cmd is null\n", __func__);
 		return -EINVAL;
 	}
 
@@ -333,7 +351,7 @@ static int mipi_write(u32 id, u8 cmd_id, const u8 *cmd, u32 offset, int size, u3
 			d1 = size;
 		}
 	} else {
-		panel_info("invalid cmd_id %d\n", cmd_id);
+		DPU_INFO_PANEL("%s: invalid cmd_id %d\n", __func__, cmd_id);
 		return -EINVAL;
 	}
 
@@ -357,7 +375,7 @@ static int mipi_write(u32 id, u8 cmd_id, const u8 *cmd, u32 offset, int size, u3
 				print_tx(MIPI_DSI_DCS_LONG_WRITE, gpara, gpara_len);
 			if (dsim_write_data(dsim, MIPI_DSI_DCS_LONG_WRITE,
 						(unsigned long)gpara, gpara_len, false)) {
-				panel_err("failed to write gpara %d (retry %d)\n",
+				DPU_ERR_PANEL("%s: failed to write gpara %d (retry %d)\n", __func__,
 						offset, retry);
 				continue;
 			}
@@ -365,7 +383,7 @@ static int mipi_write(u32 id, u8 cmd_id, const u8 *cmd, u32 offset, int size, u3
 		if (panel_cmd_log_enabled(PANEL_CMD_LOG_DSI_TX))
 			print_tx(type, cmd, size);
 		if (dsim_write_data(dsim, type, d0, d1, block)) {
-			panel_err("failed to write cmd %02X size %d(retry %d)\n",
+			DPU_ERR_PANEL("%s: failed to write cmd %02X size %d(retry %d)\n", __func__,
 					cmd[0], size, retry);
 			continue;
 		}
@@ -374,13 +392,13 @@ static int mipi_write(u32 id, u8 cmd_id, const u8 *cmd, u32 offset, int size, u3
 	}
 
 	if (retry < 0) {
-		panel_err("failed: exceed retry count (cmd %02X)\n",
+		DPU_ERR_PANEL("%s: failed: exceed retry count (cmd %02X)\n", __func__,
 				cmd[0]);
 		ret = -EIO;
 		goto error;
 	}
 
-	panel_dbg("cmd_id %d, addr %02X offset %d size %d\n",
+	DPU_DEBUG_PANEL("%s: cmd_id %d, addr %02X offset %d size %d\n", __func__,
 			cmd_id, cmd[0], offset, size);
 	ret = size;
 
@@ -399,29 +417,29 @@ static int mipi_write_table(u32 id, const struct cmd_set *cmd, int size, u32 opt
 	struct dsim_device *dsim = get_dsim_drvdata(id);
 	int i, from = 0, sz_pl = 0;
 	s64 elapsed_usec;
-	struct timespec cur_ts, last_ts, delta_ts;
+	struct timespec64 cur_ts, last_ts, delta_ts;
 
 	if (!cmd) {
-		panel_err("cmd is null\n");
+		DPU_ERR_PANEL("%s: cmd is null\n", __func__);
 		return -EINVAL;
 	}
 
 	if (size <= 0) {
-		panel_err("invalid cmd size %d\n", size);
+		DPU_ERR_PANEL("%s: invalid cmd size %d\n", __func__, size);
 		return -EINVAL;
 	}
 
 	if (size > MAX_CMD_SET_SIZE) {
-		panel_err("exceeded MAX_CMD_SET_SIZE(%d) %d\n",
+		DPU_ERR_PANEL("%s: exceeded MAX_CMD_SET_SIZE(%d) %d\n", __func__,
 				MAX_CMD_SET_SIZE, size);
 		return -EINVAL;
 	}
 
-	ktime_get_ts(&last_ts);
+	ktime_get_ts64(&last_ts);
 	mutex_lock(&cmd_lock);
 	for (i = 0; i < size; i++) {
 		if (cmd[i].buf == NULL) {
-			panel_err("cmd[%d].buf is null\n", i);
+			DPU_ERR_PANEL("%s: cmd[%d].buf is null\n", __func__, i);
 			continue;
 		}
 
@@ -444,7 +462,7 @@ static int mipi_write_table(u32 id, const struct cmd_set *cmd, int size, u32 opt
 				cmd_set[i].data_len = cmd[i].size;
 			}
 		} else {
-			panel_info("invalid cmd_id %d\n", cmd[i].cmd_id);
+			DPU_INFO_PANEL("%s: invalid cmd_id %d\n", __func__, cmd[i].cmd_id);
 			ret = -EINVAL;
 			goto error;
 		}
@@ -453,11 +471,11 @@ static int mipi_write_table(u32 id, const struct cmd_set *cmd, int size, u32 opt
 		if ((i - from >= MAX_DSIM_PH_SIZE) ||
 			(sz_pl + ALIGN(cmd_set[i].data_len, 4) >= MAX_DSIM_PL_SIZE)) {
 			if (dsim_write_cmd_set(dsim, &cmd_set[from], i - from, false)) {
-				panel_err("failed to write cmd_set\n");
+				DPU_ERR_PANEL("%s: failed to write cmd_set\n", __func__);
 				ret = -EIO;
 				goto error;
 			}
-			panel_dbg("cmd_set:%d pl:%d\n", i - from, sz_pl);
+			DPU_DEBUG_PANEL("%s: cmd_set:%d pl:%d\n", __func__, i - from, sz_pl);
 			if (panel_cmd_log_enabled(PANEL_CMD_LOG_DSI_TX))
 				print_dsim_cmd(&cmd_set[from], i - from);
 			from = i;
@@ -469,15 +487,15 @@ static int mipi_write_table(u32 id, const struct cmd_set *cmd, int size, u32 opt
 	}
 
 	if (dsim_write_cmd_set(dsim, &cmd_set[from], i - from, false)) {
-		panel_err("failed to write cmd_set\n");
+		DPU_ERR_PANEL("%s: failed to write cmd_set\n", __func__);
 		ret = -EIO;
 		goto error;
 	}
 
-	ktime_get_ts(&cur_ts);
-	delta_ts = timespec_sub(cur_ts, last_ts);
-	elapsed_usec = timespec_to_ns(&delta_ts) / 1000;
-	panel_dbg("done (cmd_set:%d size:%d elapsed %2lld.%03lld msec)\n",
+	ktime_get_ts64(&cur_ts);
+	delta_ts = timespec64_sub(cur_ts, last_ts);
+	elapsed_usec = timespec64_to_ns(&delta_ts) / 1000;
+	DPU_DEBUG_PANEL("%s: done (cmd_set:%d size:%d elapsed %2lld.%03lld msec)\n", __func__,
 			size, total_size,
 			elapsed_usec / 1000, elapsed_usec % 1000);
 	if (panel_cmd_log_enabled(PANEL_CMD_LOG_DSI_TX))
@@ -496,11 +514,11 @@ static int mipi_sr_write(u32 id, u8 cmd_id, const u8 *cmd, u32 offset, int size,
 	int ret = 0;
 	struct dsim_device *dsim = get_dsim_drvdata(id);
 	s64 elapsed_usec;
-	struct timespec cur_ts, last_ts, delta_ts;
+	struct timespec64 cur_ts, last_ts, delta_ts;
 	int align = 0;
 
 	if (!cmd) {
-		panel_err("cmd is null\n");
+		DPU_ERR_PANEL("%s: cmd is null\n", __func__);
 		return -EINVAL;
 	}
 
@@ -511,19 +529,19 @@ static int mipi_sr_write(u32 id, u8 cmd_id, const u8 *cmd, u32 offset, int size,
 
 	if (align == 0) {
 		/* protect for already released panel: 16byte align */
-		panel_warn("sram packets need to align option, set force to 16\n");
+		DPU_ERR_PANEL("%s: sram packets need to align option, set force to 16\n", __func__);
 		align = 16;
 	}
-	ktime_get_ts(&last_ts);
+	ktime_get_ts64(&last_ts);
 
 	mutex_lock(&cmd_lock);
 	ret = dsim_sr_write_data(dsim, cmd, size, align);
 	mutex_unlock(&cmd_lock);
 
-	ktime_get_ts(&cur_ts);
-	delta_ts = timespec_sub(cur_ts, last_ts);
-	elapsed_usec = timespec_to_ns(&delta_ts) / 1000;
-	panel_dbg("done (size:%d elapsed %2lld.%03lld msec)\n",
+	ktime_get_ts64(&cur_ts);
+	delta_ts = timespec64_sub(cur_ts, last_ts);
+	elapsed_usec = timespec64_to_ns(&delta_ts) / 1000;
+	DPU_DEBUG_PANEL("%s: done (size:%d elapsed %2lld.%03lld msec)\n", __func__,
 			size, elapsed_usec / 1000, elapsed_usec % 1000);
 
 	return ret;
@@ -535,7 +553,7 @@ static int mipi_read(u32 id, u8 addr, u32 offset, u8 *buf, int size, u32 option)
 	struct dsim_device *dsim = get_dsim_drvdata(id);
 
 	if (!buf) {
-		panel_err("buf is null\n");
+		DPU_ERR_PANEL("%s: buf is null\n", __func__);
 		return -EINVAL;
 	}
 
@@ -559,7 +577,7 @@ static int mipi_read(u32 id, u8 addr, u32 offset, u8 *buf, int size, u32 option)
 				print_tx(MIPI_DSI_DCS_LONG_WRITE, gpara, gpara_len);
 			if (dsim_write_data(dsim, MIPI_DSI_DCS_LONG_WRITE,
 						(unsigned long)gpara, gpara_len, false)) {
-				panel_err("failed to write gpara %d (retry %d)\n",
+				DPU_ERR_PANEL("%s: failed to write gpara %d (retry %d)\n", __func__,
 						offset, retry);
 				continue;
 			}
@@ -576,7 +594,7 @@ static int mipi_read(u32 id, u8 addr, u32 offset, u8 *buf, int size, u32 option)
 		ret = dsim_read_data(dsim, MIPI_DSI_DCS_READ,
 				(u32)addr, size, buf);
 		if (ret != size) {
-			panel_err("failed to read addr %02X ofs %d size %d (ret %d, retry %d)\n",
+			DPU_ERR_PANEL("%s: failed to read addr %02X ofs %d size %d (ret %d, retry %d)\n", __func__,
 					addr, offset, size, ret, retry);
 			continue;
 		}
@@ -586,12 +604,12 @@ static int mipi_read(u32 id, u8 addr, u32 offset, u8 *buf, int size, u32 option)
 	}
 
 	if (retry < 0) {
-		panel_err("failed: exceed retry count (addr %02X)\n", addr);
+		DPU_ERR_PANEL("%s: failed: exceed retry count (addr %02X)\n", __func__, addr);
 		ret = -EIO;
 		goto error;
 	}
 
-	panel_dbg("addr %02X ofs %d size %d, buf %02X done\n",
+	DPU_DEBUG_PANEL("%s: addr %02X ofs %d size %d, buf %02X done\n", __func__,
 			addr, offset, size, buf[0]);
 
 	ret = size;
@@ -606,7 +624,7 @@ enum dsim_state get_dsim_state(u32 id)
 	struct dsim_device *dsim = get_dsim_drvdata(id);
 
 	if (dsim == NULL) {
-		panel_err("dsim is NULL\n");
+		DPU_ERR_PANEL("%s: dsim is NULL\n", __func__);
 		return -ENODEV;
 	}
 	return dsim->state;
@@ -632,6 +650,63 @@ static int wait_for_vsync(u32 id, u32 timeout)
 	return ret;
 }
 
+static int set_bypass(u32 id, bool on)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+
+	if (!decon)
+		return -EINVAL;
+
+	if (on)
+		decon_bypass_on(decon);
+	else
+		decon_bypass_off(decon);
+
+	return 0;
+}
+
+static int get_bypass(u32 id)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+
+	if (!decon)
+		return -EINVAL;
+
+	return atomic_read(&decon->bypass);
+}
+
+static int wake_lock(u32 id, unsigned long timeout)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+
+	if (!decon)
+		return -EINVAL;
+
+	return decon_wake_lock(decon, timeout);
+}
+
+static int wake_unlock(u32 id)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+
+	if (!decon)
+		return -EINVAL;
+
+	decon_wake_unlock(decon);
+	return 0;
+}
+
+static int flush_image(u32 id)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+
+	if (!decon)
+		return -EINVAL;
+
+	mcd_decon_flush_image(decon);
+	return 0;
+}
+
 static int panel_drv_put_ops(struct exynos_panel_device *panel)
 {
 	int ret = 0;
@@ -645,12 +720,18 @@ static int panel_drv_put_ops(struct exynos_panel_device *panel)
 	mipi_ops.parse_dt = parse_lcd_info;
 	mipi_ops.get_lcd_info = get_lcd_info;
 	mipi_ops.wait_for_vsync = wait_for_vsync;
+	/* TODO: seperate mipi_drv ops and decon_drv_ops */
+	mipi_ops.set_bypass = set_bypass;
+	mipi_ops.get_bypass = get_bypass;
+	mipi_ops.wake_lock = wake_lock;
+	mipi_ops.wake_unlock = wake_unlock;
+	mipi_ops.flush_image = flush_image;
 
 	v4l2_set_subdev_hostdata(panel->panel_drv_sd, &mipi_ops);
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_DSIM_PUT_MIPI_OPS, NULL);
 	if (ret) {
-		panel_err("failed to set mipi ops\n");
+		DPU_ERR_PANEL("%s: failed to set mipi ops\n", __func__);
 		return ret;
 	}
 
@@ -663,39 +744,39 @@ static int panel_drv_init(struct exynos_panel_device *panel)
 
 	ret = panel_drv_put_ops(panel);
 	if (ret) {
-		panel_err("failed to put ops\n");
+		DPU_ERR_PANEL("%s: failed to put ops\n", __func__);
 		goto do_exit;
 	}
 
 	ret = panel_drv_probe(panel);
 	if (ret) {
-		panel_err("failed to probe panel");
+		DPU_ERR_PANEL("%s: failed to probe panel", __func__);
 		goto do_exit;
 	}
 
 	ret = panel_drv_get_state(panel);
 	if (ret) {
-		panel_err("failed to get panel state\n");
+		DPU_ERR_PANEL("%s: failed to get panel state\n", __func__);
 		goto do_exit;
 	}
 
 #if defined(CONFIG_PANEL_DISPLAY_MODE)
 	ret = panel_drv_get_panel_display_mode(panel);
 	if (ret < 0) {
-		panel_err("failed to get panel_display_modes\n");
+		DPU_ERR_PANEL("%s: failed to get panel_display_modes\n", __func__);
 		goto do_exit;
 	}
 #endif
 
 	ret = panel_drv_get_mres(panel);
 	if (ret) {
-		panel_err("failed to get panel mres\n");
+		DPU_ERR_PANEL("%s: failed to get panel mres\n", __func__);
 		goto do_exit;
 	}
 
 	ret = panel_drv_set_vrr_cb(panel);
 	if (ret) {
-		panel_err("failed to set vrr callback\n");
+		DPU_ERR_PANEL("%s: failed to set vrr callback\n", __func__);
 		goto do_exit;
 	}
 
@@ -711,12 +792,12 @@ static int common_panel_connected(struct exynos_panel_device *panel)
 
 	ret = panel_drv_get_state(panel);
 	if (ret) {
-		panel_err("failed to get panel state\n");
+		DPU_ERR_PANEL("%s: failed to get panel state\n", __func__);
 		return ret;
 	}
 
 	ret = !(panel_state->connect_panel == PANEL_DISCONNECT);
-	panel_info("panel %s\n",
+	DPU_INFO_PANEL("%s: panel %s\n", __func__,
 			ret ? "connected" : "disconnected");
 
 	return ret;
@@ -728,7 +809,7 @@ static int common_panel_init(struct exynos_panel_device *panel)
 
 	ret = panel_drv_init(panel);
 	if (ret) {
-		panel_err("failed to init common panel\n");
+		DPU_ERR_PANEL("%s: failed to init common panel\n", __func__);
 		return ret;
 	}
 
@@ -741,7 +822,7 @@ static int common_panel_probe(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_PANEL_PROBE, &panel->id);
 	if (ret) {
-		panel_err("failed to probe panel\n");
+		DPU_ERR_PANEL("%s: failed to probe panel\n", __func__);
 		return ret;
 	}
 
@@ -755,7 +836,7 @@ static int common_panel_displayon(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_DISP_ON, (void *)&disp_on);
 	if (ret) {
-		panel_err("failed to display on\n");
+		DPU_ERR_PANEL("%s: failed to display on\n", __func__);
 		return ret;
 	}
 
@@ -768,7 +849,7 @@ static int common_panel_suspend(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_SLEEP_IN, NULL);
 	if (ret) {
-		panel_err("failed to sleep in\n");
+		DPU_ERR_PANEL("%s: failed to sleep in\n", __func__);
 		return ret;
 	}
 
@@ -786,7 +867,7 @@ static int common_panel_dump(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_PANEL_DUMP, NULL);
 	if (ret) {
-		panel_err("failed to dump panel\n");
+		DPU_ERR_PANEL("%s: failed to dump panel\n", __func__);
 		return ret;
 	}
 
@@ -820,9 +901,9 @@ static int common_panel_setarea(struct exynos_panel_device *panel, u32 l, u32 r,
 		print_tx(MIPI_DSI_DCS_LONG_WRITE, column, ARRAY_SIZE(column));
 	while (dsim_write_data(dsim, MIPI_DSI_DCS_LONG_WRITE,
 				(unsigned long)column, ARRAY_SIZE(column), false) != 0) {
-		panel_err("failed to write COLUMN_ADDRESS\n");
+		DPU_ERR_PANEL("%s: failed to write COLUMN_ADDRESS\n", __func__);
 		if (--retry <= 0) {
-			panel_err("COLUMN_ADDRESS is failed: exceed retry count\n");
+			DPU_ERR_PANEL("%s: COLUMN_ADDRESS is failed: exceed retry count\n", __func__);
 			ret = -EINVAL;
 			goto error;
 		}
@@ -833,15 +914,15 @@ static int common_panel_setarea(struct exynos_panel_device *panel, u32 l, u32 r,
 		print_tx(MIPI_DSI_DCS_LONG_WRITE, page, ARRAY_SIZE(page));
 	while (dsim_write_data(dsim, MIPI_DSI_DCS_LONG_WRITE,
 				(unsigned long)page, ARRAY_SIZE(page), true) != 0) {
-		panel_err("failed to write PAGE_ADDRESS\n");
+		DPU_ERR_PANEL("%s: failed to write PAGE_ADDRESS\n", __func__);
 		if (--retry <= 0) {
-			panel_err("PAGE_ADDRESS is failed: exceed retry count\n");
+			DPU_ERR_PANEL("%s: PAGE_ADDRESS is failed: exceed retry count\n", __func__);
 			ret = -EINVAL;
 			goto error;
 		}
 	}
 
-	panel_dbg("RECT [l:%d r:%d t:%d b:%d w:%d h:%d]\n",
+	DPU_DEBUG_PANEL("%s: RECT [l:%d r:%d t:%d b:%d w:%d h:%d]\n", __func__,
 			l, r, t, b, r - l + 1, b - t + 1);
 
 error:
@@ -855,10 +936,10 @@ static int common_panel_power(struct exynos_panel_device *panel, int on)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_SET_POWER, (void *)&on);
 	if (ret) {
-		panel_err("failed to panel %s\n", on ? "on" : "off");
+		DPU_ERR_PANEL("%s: failed to panel %s\n", __func__, on ? "on" : "off");
 		return ret;
 	}
-	panel_dbg("power %s\n", on ? "on" : "off");
+	DPU_DEBUG_PANEL("%s: power %s\n", __func__, on ? "on" : "off");
 
 	return 0;
 }
@@ -879,7 +960,7 @@ static int common_panel_sleepin(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_SLEEP_IN, NULL);
 	if (ret) {
-		panel_err("failed to sleep in\n");
+		DPU_ERR_PANEL("%s: failed to sleep in\n", __func__);
 		return ret;
 	}
 
@@ -892,7 +973,7 @@ static int common_panel_sleepout(struct exynos_panel_device *panel)
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_SLEEP_OUT, NULL);
 	if (ret) {
-		panel_err("failed to sleep out\n");
+		DPU_ERR_PANEL("%s: failed to sleep out\n", __func__);
 		return ret;
 	}
 
@@ -906,7 +987,20 @@ static int common_panel_notify(struct exynos_panel_device *panel, void *data)
 	ret = panel_drv_notify(panel->panel_drv_sd,
 			V4L2_DEVICE_NOTIFY_EVENT, data);
 	if (ret) {
-		panel_err("failed to notify\n");
+		DPU_ERR_PANEL("%s: failed to notify\n", __func__);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int common_panel_reset_panel(struct exynos_panel_device *panel)
+{
+	int ret;
+
+	ret = panel_drv_ioctl(panel, PANEL_IOC_PANEL_RESET, NULL);
+	if (ret) {
+		DPU_ERR_PANEL("%s: failed to reset panel\n", __func__);
 		return ret;
 	}
 
@@ -921,12 +1015,12 @@ static int common_panel_read_state(struct exynos_panel_device *panel)
 #ifdef CONFIG_EXYNOS_DOZE
 static int common_panel_doze(struct exynos_panel_device *panel)
 {
-#ifdef CONFIG_SUPPORT_DOZE
+#ifdef CONFIG_EXYNOS_DOZE
 	int ret;
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_DOZE, NULL);
 	if (ret) {
-		panel_err("failed to sleep out\n");
+		DPU_ERR_PANEL("%s: failed to sleep out\n", __func__);
 		return ret;
 	}
 #endif
@@ -936,12 +1030,12 @@ static int common_panel_doze(struct exynos_panel_device *panel)
 
 static int common_panel_doze_suspend(struct exynos_panel_device *panel)
 {
-#ifdef CONFIG_SUPPORT_DOZE
+#ifdef CONFIG_EXYNOS_DOZE
 	int ret;
 
 	ret = panel_drv_ioctl(panel, PANEL_IOC_DOZE_SUSPEND, NULL);
 	if (ret) {
-		panel_err("failed to sleep out\n");
+		DPU_ERR_PANEL("%s: failed to sleep out\n", __func__);
 		return ret;
 	}
 #endif
@@ -957,7 +1051,7 @@ static int common_panel_get_display_mode(struct exynos_panel_device *panel, void
 
 	ret = panel_drv_get_panel_display_mode(panel);
 	if (ret < 0) {
-		panel_err("failed to get panel_display_modes\n");
+		DPU_ERR_PANEL("%s: failed to get panel_display_modes\n", __func__);
 		return ret;
 	}
 
@@ -979,14 +1073,14 @@ static int common_panel_set_display_mode(struct exynos_panel_device *panel, void
 	lcd_info = &panel->lcd_info;
 	panel_modes = lcd_info->panel_modes;
 	if (!panel_modes) {
-		panel_err("panel_modes not prepared\n");
+		DPU_ERR_PANEL("%s: panel_modes not prepared\n", __func__);
 		return -EPERM;
 	}
 
 	panel_mode_idx = *(int *)data;
 	if (panel_mode_idx < 0 ||
 		panel_mode_idx >= panel_modes->num_modes) {
-		panel_err("invalid panel_mode_idx(%d)\n", panel_mode_idx);
+		DPU_ERR_PANEL("%s: invalid panel_mode_idx(%d)\n", __func__, panel_mode_idx);
 		return -EINVAL;
 	}
 
@@ -994,7 +1088,7 @@ static int common_panel_set_display_mode(struct exynos_panel_device *panel, void
 			PANEL_IOC_SET_DISPLAY_MODE,
 			panel_modes->modes[panel_mode_idx]);
 	if (ret < 0) {
-		panel_err("failed to set panel_display_mode(%d)\n",
+		DPU_ERR_PANEL("%s: failed to set panel_display_mode(%d)\n", __func__,
 				panel_mode_idx);
 		return ret;
 	}
@@ -1019,6 +1113,7 @@ struct exynos_panel_ops common_panel_ops = {
 	.notify		= common_panel_notify,
 	.read_state	= common_panel_read_state,
 	.set_error_cb	= common_panel_set_error_cb,
+	.reset_panel = common_panel_reset_panel,
 #ifdef CONFIG_EXYNOS_DOZE
 	.doze		= common_panel_doze,
 	.doze_suspend	= common_panel_doze_suspend,

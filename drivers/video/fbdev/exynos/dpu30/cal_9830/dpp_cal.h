@@ -40,9 +40,6 @@ struct dpp_params_info {
 
 	unsigned long rcv_num;
 	enum dpp_comp_type comp_type;
-#ifdef CONFIG_EXYNOS_MCD_HDR
-	u32 wcg_mode;
-#endif
 };
 
 struct dpp_size_constraints {

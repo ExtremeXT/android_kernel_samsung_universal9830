@@ -14,33 +14,36 @@
 
 #include <linux/fb.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/clk.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
 #include <linux/kthread.h>
-#include <linux/pm_qos.h>
+#include <soc/samsung/exynos_pm_qos.h>
 #include <linux/delay.h>
 #include <linux/seq_file.h>
 #include <linux/platform_device.h>
 #include <media/v4l2-device.h>
 #include <media/videobuf2-core.h>
-#if defined(CONFIG_EXYNOS_BTS)
+#if defined(CONFIG_EXYNOS_SUPPORT_HWFC)
+#include <media/exynos_repeater.h>
+#endif
+#if IS_ENABLED(CONFIG_EXYNOS_BTS) || IS_ENABLED(CONFIG_EXYNOS_BTS_MODULE)
 #include <soc/samsung/bts.h>
 #endif
-#if defined(CONFIG_EXYNOS_ITMON)
+#if IS_ENABLED(CONFIG_EXYNOS_ITMON)
 #include <soc/samsung/exynos-itmon.h>
 #endif
-#if defined(CONFIG_EXYNOS_PD)
+#if IS_ENABLED(CONFIG_EXYNOS_PD)
 #include <soc/samsung/exynos-pd.h>
 #endif
-#include <linux/exynos_iovmm.h>
+#include <linux/iommu.h>
 #include <linux/sync_file.h>
-#include <soc/samsung/exynos-debug.h>
 
 /* TODO: SoC dependency will be removed */
-#include "./cal_9830/regs-decon.h"
-#include "./cal_9830/decon_cal.h"
+#include "./cal_2100/regs-decon.h"
+#include "./cal_2100/decon_cal.h"
 
 #include "./panels/exynos_panel.h"
 #include "dsim.h"
@@ -48,23 +51,23 @@
 #include "hdr_metadata.h"
 #include "format.h"
 
-#ifdef CONFIG_EXYNOS_COMMON_PANEL
-#include "../panel/panel_drv.h"
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+#include "mcd.h"
 #endif
-
-#ifdef CONFIG_SEC_ABC
-#include <linux/sti/abc_common.h>
-#endif
-
-/*#define CONFIG_PROFILE_WINCONFIG	1*/
 
 #define SUCCESS_EXYNOS_SMC	0
 
+#if defined(CONFIG_SOC_EXYNOS2100_EVT0)
 #define MAX_DECON_CNT		3
-#define MAX_DECON_WIN		6
-#define MAX_DPP_SUBDEV		7
+#else
+#define MAX_DECON_CNT		4
+#endif
+#define MAX_DECON_WIN		16
+#define MAX_DPP_SUBDEV		17 /* + ODMA case */
 
-#define DISP_RESTRICTION_VER	20190612
+#define DISP_RESTRICTION_VER	20200115
+
+#define SYSFS_UNITTEST_INTERFACE	1
 
 extern struct decon_device *decon_drvdata[MAX_DECON_CNT];
 extern int decon_log_level;
@@ -75,6 +78,17 @@ extern int dpu_fence_log_level;
 extern int dpu_dma_buf_log_level;
 extern int decon_systrace_enable;
 extern struct decon_bts_ops decon_bts_control;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+extern int panel_cmd_log_level;
+enum {
+	PANEL_CMD_LOG_DSI_TX,
+	PANEL_CMD_LOG_DSI_RX,
+};
+#endif
+#if defined(CONFIG_UML)
+static inline int cal_pd_control(unsigned int id, int on) { return 0; }
+static inline int cal_pd_status(unsigned int id) { return 0; }
+#endif
 
 #define DECON_MODULE_NAME	"exynos-decon"
 #define MAX_NAME_SIZE		32
@@ -83,7 +97,11 @@ extern struct decon_bts_ops decon_bts_control;
 #define DECON_ENTER_HIBER_CNT	4
 #define MIN_BLK_MODE_WIDTH	144
 #define MIN_BLK_MODE_HEIGHT	16
+#ifdef CONFIG_EXYNOS_EMUL_DISP
+#define VSYNC_TIMEOUT_MSEC	5000
+#else
 #define VSYNC_TIMEOUT_MSEC	200
+#endif
 #define DEFAULT_BPP		32
 #define MIN_WIN_BLOCK_WIDTH	8
 #define MIN_WIN_BLOCK_HEIGHT	1
@@ -112,9 +130,9 @@ extern struct decon_bts_ops decon_bts_control;
 
 #define MAX_DSC_SLICE_CNT	4
 
-/*#define DEBUG_DMA_BUF_LEAK	1*/
+#define BTS_INFO_PRINT_BLOCK_TIMEOUT (5000)
 
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 #define MIN_FRAME_DONE_ERR_CHECK_USEC (8000) /* 8ms */
 #define FRAME_DONE_ERR_CHECK_SKIP_TIMEOUT (3000) /* 3s */
 #endif
@@ -211,15 +229,13 @@ void dpu_debug_printk(const char *function_name, const char *format, ...);
 		if (dpu_dma_buf_log_level >= 7)					\
 			dpu_debug_printk("DMA_BUF", fmt,  ##args);			\
 	} while (0)
-#ifdef CONFIG_EXYNOS_MCD_HDR
-#define IS_HDR_FMT(hdr_std) ((hdr_std == DPP_HDR_ST2084) || (hdr_std == DPP_HDR_HLG))
-#endif
+
 /* DECON systrace related */
-void decon_tracing_mark_write(struct decon_device *decon, char id, char *str1, int value);
+void tracing_mark_write(struct decon_device *decon, char id, char *str1, int value);
 #define decon_systrace(decon, id, str1, value)					\
 	do {									\
 		if (decon_systrace_enable)					\
-			decon_tracing_mark_write(decon, id, str1, value);		\
+			tracing_mark_write(decon, id, str1, value);		\
 	} while (0)
 
 enum decon_hold_scheme {
@@ -344,6 +360,9 @@ enum dpp_csc_eq {
 	CSC_BT_470M = 9,
 	CSC_FILM = 10,
 	CSC_ADOBE_RGB = 11,
+	CSC_BT709_C = 12,
+	CSC_BT2020_C = 13,
+	CSC_DCI_P3_C = 14,
 	CSC_STANDARD_UNSPECIFIED = 63,
 	/* eq_mode : 3bits [8:6] */
 	CSC_RANGE_SHIFT = 6,
@@ -363,9 +382,6 @@ enum dpp_comp_src {
 
 enum dpp_hdr_standard {
 	DPP_HDR_OFF = 0,
-#ifdef CONFIG_EXYNOS_MCD_HDR
-	DPP_TRANSFER_UNSPECIFIED = 0,
-#endif
 	DPP_HDR_ST2084 = 1,
 	DPP_HDR_HLG = 2,
 	DPP_TRANSFER_LINEAR = 3,
@@ -376,7 +392,6 @@ enum dpp_hdr_standard {
 	DPP_TRANSFER_GAMMA2_8 = 8,
 };
 
-#if defined(CONFIG_EXYNOS_DECON_DQE)
 /* HAL intent info */
 enum HAL_intent_info {
 	HAL_RENDER_INTENT_COLORIMETRIC = 0,
@@ -425,21 +440,18 @@ struct decon_color_mode_with_render_intent_info {
 	u32 color_mode;
 	u32 render_intent;
 };
-#endif
 
 enum decon_color_mode {
 	HAL_COLOR_MODE_NATIVE = 0,
-#ifdef CONFIG_EXYNOS_MCD_HDR
-	HAL_COLOR_MODE_STANDARD_BT601_625			 = 1,
+	HAL_COLOR_MODE_STANDARD_BT601_625 = 1,
 	HAL_COLOR_MODE_STANDARD_BT601_625_UNADJUSTED = 2,
-	HAL_COLOR_MODE_STANDARD_BT601_525			 = 3,
+	HAL_COLOR_MODE_STANDARD_BT601_525 = 3,
 	HAL_COLOR_MODE_STANDARD_BT601_525_UNADJUSTED = 4,
-	HAL_COLOR_MODE_STANDARD_BT709				 = 5,
-	HAL_COLOR_MODE_DCI_P3						 = 6,
-	HAL_COLOR_MODE_SRGB 						 = 7,
-	HAL_COLOR_MODE_ADOBE_RGB					 = 8,
-	HAL_COLOR_MODE_DISPLAY_P3					 = 9,
- #endif
+	HAL_COLOR_MODE_STANDARD_BT709 = 5,
+	HAL_COLOR_MODE_DCI_P3 = 6,
+	HAL_COLOR_MODE_SRGB = 7,
+	HAL_COLOR_MODE_ADOBE_RGB = 8,
+	HAL_COLOR_MODE_DISPLAY_P3 = 9,
 	HAL_COLOR_MODE_NUM_MAX,
 };
 
@@ -453,8 +465,9 @@ enum decon_supported_color_mode {
 
 
 #define VRR_UPDATE				0x80000000
-#define WIN_VRR_HS_MODE			1
 #define WIN_VRR_NORMAL_MODE		0
+#define WIN_VRR_HS_MODE			1
+#define WIN_VRR_PASSIVE_MODE		2
 
 struct decon_color_mode_info {
 	int index;
@@ -472,6 +485,11 @@ struct decon_dma_buf_data {
 	dma_addr_t			dma_addr;
 	struct dma_fence		*fence;
 	int				dpp_ch;
+#if defined(CONFIG_EXYNOS_DECON_BUFFER_SANITY_CHECK)
+	void *vaddr;
+	int acq_fence;
+	u64 checksum64;
+#endif
 };
 
 struct decon_win_rect {
@@ -498,6 +516,29 @@ struct dpp_params {
 	u32 max_luminance;
 };
 
+#if defined(CONFIG_EXYNOS_SUPPORT_8K_SPLIT)
+enum dpp_split_en {
+	DPP_SPLIT_OFF = 0,
+	DPP_SPLIT_LEFT = 1,
+	DPP_SPLIT_RIGHT = 2,
+};
+
+enum dpp_split_direction {
+	DPP_SPLIT_VERTICAL = 0,
+	DPP_SPLIT_HORIZONTAL = 1,
+};
+
+struct aux_frame {
+	/* DMA infomation for 8k split */
+	enum dpp_split_en spl_en;
+	/* DMA/DPP infomation for 8k split */
+	u32 padd_w;
+	u32 padd_h;
+	/* DPP infomation for 8k split */
+	enum dpp_split_direction spl_drtn;
+};
+#endif
+
 struct decon_frame {
 	int x;
 	int y;
@@ -507,23 +548,31 @@ struct decon_frame {
 	u32 f_h;
 };
 
-struct decon_readback {
-	bool enabled;
+struct decon_readback_entry {
 	bool request;
 	bool drm;
 	u8 num_buffers;
 	struct decon_dma_buf_data dma_buf_data[MAX_PLANE_CNT];
 	struct dma_fence *fence;
-	struct work_struct work;
-	struct workqueue_struct *wq;
-	u32 map_cnt;
-	u32 unmap_cnt;
+	struct list_head list;
 };
 
+struct decon_readback {
+	bool enabled;
+	struct work_struct work;
+	struct workqueue_struct *wq;
+	spinlock_t work_list_lock;
+	struct list_head work_list;
+	spinlock_t standby_list_lock;
+	struct list_head standby_list;
+};
+
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 struct vrr_config_data {
 	u32 fps;
 	u32 mode;
 };
+#endif
 
 struct decon_win_config {
 	enum {
@@ -532,9 +581,11 @@ struct decon_win_config {
 		DECON_WIN_STATE_BUFFER,
 		DECON_WIN_STATE_UPDATE,
 		DECON_WIN_STATE_CURSOR,
+		DECON_WIN_STATE_BUFFER_LIBREQ,
 		DECON_WIN_STATE_MRESOL = 0x10000,
 		DECON_WIN_STATE_VRR_NORMALMODE= 0x20000,
 		DECON_WIN_STATE_VRR_HSMODE = 0x20001,
+		DECON_WIN_STATE_VRR_PASSIVEMODE = 0x20002,
 #ifdef CONFIG_SUPPORT_MASK_LAYER
 		DECON_WIN_STATE_FINGERPRINT = 0x30000,
 #endif
@@ -545,6 +596,7 @@ struct decon_win_config {
 		__u32 color;
 		struct {
 			int				fd_idma[3];
+			int				fd_hdr;
 			int				acq_fence;
 			int				rel_fence;
 			enum decon_blending		blending;
@@ -558,6 +610,10 @@ struct decon_win_config {
 			struct decon_win_rect		opaque_area;
 			/* source framebuffer coordinates */
 			struct decon_frame		src;
+#if defined(CONFIG_EXYNOS_SUPPORT_8K_SPLIT)
+			/* auxiliary source framebuffer coordinates */
+			struct aux_frame		aux_src;
+#endif
 		};
 	};
 
@@ -566,6 +622,12 @@ struct decon_win_config {
 	bool protection;
 	bool compression;
 	int plane_alpha;
+
+#if defined(CONFIG_EXYNOS_SUPPORT_VOTF_IN)
+	/* vOTF */
+	bool votf_en;
+	u32 votf_buf_idx;
+#endif
 };
 
 struct decon_reg_data {
@@ -578,7 +640,7 @@ struct decon_reg_data {
 	struct decon_window_regs win_regs[MAX_DECON_WIN + 2];
 	struct decon_dma_buf_data dma_buf_data[MAX_DECON_WIN + 2][MAX_PLANE_CNT];
 	struct dma_fence *retire_fence;
-	struct decon_readback readback;
+	struct decon_readback_entry readback_entry;
 
 	/*
 	 * If window update size is changed, that size has to be applied to
@@ -602,33 +664,26 @@ struct decon_reg_data {
 	u32 lcd_width;
 	u32 lcd_height;
 
+	u32 fps;
+	u32 mode_idx;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	u32 fps_update;
 	struct vrr_config_data vrr_config;
-
-	int mode_idx;
-#ifdef CONFIG_DYNAMIC_FREQ
-	int df_update;
+	struct mcd_decon_reg_data mcd_reg_data;
 #endif
+
+#if defined(CONFIG_EXYNOS_SUPPORT_HWFC)
+	bool hwfc_enable;
+	u32 hwfc_idx;
+#endif
+	bool lib_requested;
+
 #ifdef CONFIG_SUPPORT_MASK_LAYER
 	bool mask_layer;
 #endif
-
-#ifdef CONFIG_PROFILE_WINCONFIG
-	ktime_t create_time;
-	int remained_frames;
-#endif
-
-#ifdef DEBUG_DMA_BUF_LEAK
-	int import_cnt;
-	ktime_t import_time;
-#endif
-
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
-	u32 fps;
-#endif
-	unsigned long idx;
 };
 
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 struct decon_win_config_extra {
 	int remained_frames;
 	u32 reserved[7];
@@ -640,18 +695,16 @@ struct decon_win_config_data_old {
 	u32	fps;
 	struct decon_win_config config[MAX_DECON_WIN + 2];
 };
+#endif
 
 struct decon_win_config_data {
 	int	retire_fence;
 	int	fd_odma;
 	u32	fps;
 	struct decon_win_config config[MAX_DECON_WIN + 2];
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	struct decon_win_config_extra extra;
-};
-
-enum lcd_status {
-	LCD_OFF = 0,
-	LCD_ON  = 1,
+#endif
 };
 
 enum hwc_ver {
@@ -767,22 +820,6 @@ typedef enum dpu_event_type {
 	DPU_EVT_MAX, /* End of EVENT */
 } dpu_event_t;
 
-/* Location of calling DPU_EVT_WIN_CONFIG & DPU_EVT_UPDATE_HANDLER */
-enum dpu_wc_id {
-	WC_ID_FAIL = BIT(0),
-	WC_ID_SKIP = BIT(1),
-	WC_ID_NORMAL = BIT(2),
-	WC_ID_FPS = BIT(3),
-};
-
-enum dpu_uh_id {
-	UH_ID_IFENCE_ERR = 0,
-	UH_ID_OFENCE_ERR,
-	UH_ID_DPP_ERR,
-	UH_ID_NORMAL,
-	UH_ID_LAST_REGS,
-};
-
 /* Related with Cursor */
 struct disp_log_cursor {
 	u32 xpos;
@@ -802,23 +839,11 @@ struct disp_log_pm {
 	ktime_t elapsed;	/* End time - Start time */
 };
 
-struct decon_win_rawdata {
-	u32 id;
-	unsigned long idx;
-	u32 fps;
-	u32 state;
-	struct decon_frame winup;
-};
-
 /* Related with S3CFB_WIN_CONFIG */
 struct decon_update_reg_data {
 	struct decon_window_regs 	win_regs[MAX_DECON_WIN];
 	struct decon_win_config 	win_config[MAX_DECON_WIN + 2];
 	struct decon_win_rect 		win;
-	struct decon_win_rawdata 	win_raw;
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
-	struct decon_rect		up_region;
-#endif
 };
 
 /* Related with MIPI COMMAND read/write */
@@ -865,8 +890,10 @@ struct disp_log_rsc {
 	unsigned long cur_using_dpp;
 	unsigned long prev_req_win;
 	unsigned long cur_req_win;
-	unsigned int hw_ch_info;  /* DPP channels actually occupied by HW */
-	unsigned int hw_win_info; /* windows actually occupied by HW */
+	unsigned int hw_ch_info_0;  /* DPP channels actually occupied by HW */
+	unsigned int hw_ch_info_1;  /* DPP channels actually occupied by HW */
+	unsigned int hw_win_info_0; /* windows actually occupied by HW */
+	unsigned int hw_win_info_1; /* windows actually occupied by HW */
 };
 
 /**
@@ -886,7 +913,6 @@ struct dpu_log {
 		struct disp_log_winup winup;
 		struct disp_log_memmap memmap;
 		struct disp_log_rsc rsc;
-		struct decon_win_rawdata win_raw;
 	} data;
 };
 
@@ -896,7 +922,7 @@ struct dpu_size_err_info {
 };
 
 /* Definitions below are used in the DECON */
-#define	DPU_EVENT_LOG_MAX	SZ_2K	/* 2048 */
+#define	DPU_EVENT_LOG_MAX	810 /* (sizeof(struct dpu_log) * event_cnt < 4MB for kzalloc */
 #define	DPU_EVENT_PRINT_MAX	(DPU_EVENT_LOG_MAX >> 1)
 #define	DPU_EVENT_LOG_RETRY	3
 #define DPU_EVENT_KEEP_CNT	3
@@ -908,8 +934,7 @@ typedef enum dpu_event_log_level_type {
 /* APIs below are used in the DECON/DSIM/DPP driver */
 #define DPU_EVENT_START() ktime_t start = ktime_get()
 void DPU_EVENT_LOG(dpu_event_t type, struct v4l2_subdev *sd, ktime_t time);
-void DPU_EVENT_LOG_WINCON(struct v4l2_subdev *sd, struct decon_reg_data *regs,
-		enum dpu_uh_id id);
+void DPU_EVENT_LOG_WINCON(struct v4l2_subdev *sd, struct decon_reg_data *regs);
 void DPU_EVENT_LOG_CMD(struct v4l2_subdev *sd, u32 cmd_id, unsigned long data, u32 size);
 void DPU_EVENT_LOG_CURSOR(struct v4l2_subdev *sd, struct decon_reg_data *regs); /* cursor async */
 void DPU_EVENT_LOG_UPDATE_REGION(struct v4l2_subdev *sd,
@@ -984,18 +1009,14 @@ struct decon_hdr_capabilities_info {
 struct decon_resources {
 	int irq;
 	void __iomem *regs;
+	void __iomem *win_regs;
+	void __iomem *sub_regs;
+	void __iomem *wincon_regs;
+	void __iomem *dqe_regs;
 	void __iomem *ss_regs;
 	struct clk *aclk;
-	struct clk *dpll;
-	struct clk *pclk;
-	struct clk *eclk;
-	struct clk *eclk_leaf;
-	struct clk *vclk;
-	struct clk *vclk_leaf;
 	struct clk *busp;
 	struct clk *busd;
-	struct clk *busc;
-	struct clk *core;
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *hw_te_on;
 	struct pinctrl_state *hw_te_off;
@@ -1047,24 +1068,16 @@ struct dpu_afbc_info {
 	struct sg_table	*sg_table[MAX_DECON_WIN];
 };
 
-struct dpu_dma_info {
-	u32 count;
-	ktime_t timestamp;
-	/* map */
-	u32 buf_attach_cnt;
-	u32 map_attach_cnt;
-	u32 iovmm_map_cnt;
-	/* unmap */
-	u32 buf_detach_cnt;
-	u32 unmap_attach_cnt;
-	u32 iovmm_unmap_cnt;
-};
-
 struct decon_debug {
 	void __iomem *eint_pend;
 	struct dentry *debug_root;
 	struct dentry *debug_event;
 	struct dentry *debug_dump;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+	struct dentry *debug_decon;
+	struct dentry *debug_panel_cmd_log;
+	struct dentry *debug_vrr;
+#endif
 	struct dentry *debug_bts;
 	struct dentry *debug_win;
 	struct dentry *debug_systrace;
@@ -1091,8 +1104,6 @@ struct decon_debug {
 	struct dpu_fence_log *f_evt_log;
 	u32 f_evt_log_cnt;
 	atomic_t f_evt_log_idx;
-	struct dpu_dma_info buf_cnt;
-	struct dpu_dma_info buf_cnt_bak;
 };
 
 struct decon_update_regs {
@@ -1112,17 +1123,13 @@ struct decon_vsync {
 	int irq_refcount;
 	struct mutex lock;
 	struct task_struct *thread;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	u64 count;
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
 	u64 period;
-#endif
-#if defined(CONFIG_DECON_VRR_MODULATION)
-	u64 active_count;
-	u64 div_count;
 #endif
 };
 
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 struct decon_fsync {
 	wait_queue_head_t wait;
 	ktime_t timestamp;
@@ -1157,10 +1164,6 @@ struct decon_doze_hiber {
 
 struct decon_hiber {
 	struct mutex lock;
-#if defined(CONFIG_EXYNOS_HIBERNATION_THREAD)
-	wait_queue_head_t wait;
-#endif
-	ktime_t timestamp;
 	struct task_struct *thread;
 	struct kthread_worker worker;
 	struct kthread_work work;
@@ -1223,10 +1226,12 @@ struct decon_bts_ops {
 	void (*bts_update_bw)(struct decon_device *decon,
 			struct decon_reg_data *regs, u32 is_after);
 	void (*bts_acquire_bw)(struct decon_device *decon);
+	void (*bts_hiber_acquire_bw)(struct decon_device *decon);
 	void (*bts_release_bw)(struct decon_device *decon);
 	void (*bts_hiber_release_bw)(struct decon_device *decon);
+	void (*bts_acquire_dqe_bw)(struct decon_device *decon);
+	void (*bts_release_dqe_bw)(struct decon_device *decon);
 	void (*bts_deinit)(struct decon_device *decon);
-	void (*bts_pan_display)(struct decon_device *decon, struct decon_win_config *config);
 };
 
 struct bts_layer_position {
@@ -1244,6 +1249,7 @@ struct bts_dpp_info {
 	struct bts_layer_position dst;
 	u32 bw;
 	bool rotation;
+	bool compression;
 };
 
 struct bts_decon_info {
@@ -1253,35 +1259,70 @@ struct bts_decon_info {
 	u32 lcd_h;
 };
 
+#if defined(CONFIG_DECON_BTS_VRR_ASYNC)
+#define DEFAULT_BTS_FPS (60)
+#define MAX_SYNC_PT_COUNT (100)
+
+struct fps_sync_pt {
+	/* vsync sequence number to be applied */
+	u64 seqno;
+	u32 fps;
+	struct list_head list;
+};
+
+struct fps_sync {
+	/* bts_fps sync point list to be applied */
+	struct list_head head;
+	u32 sync_pt_count;
+	u32 candidate_fps;
+
+	/* latest bts_fps */
+	u32 applied_fps;
+
+	/* lock protecting @head */
+	struct mutex lock;
+};
+#endif
+
 struct decon_bts {
 	bool enabled;
 	u32 resol_clk;
 	u32 peak;
 	u32 total_bw;
+	u32 read_bw;
+	u32 write_bw;
 	u32 prev_total_bw;
 	u32 max_disp_freq;
 	u32 prev_max_disp_freq;
 	u32 fps;
 #if defined(CONFIG_DECON_BTS_VRR_ASYNC)
-	u32 next_fps;
-	u64 next_fps_vsync_count;
+	struct fps_sync fps_sync;
 #endif
 	u64 ppc;
-	u32 line_mem_cnt;
-	u32 cycle_per_line;
-#if defined(CONFIG_EXYNOS_BTS)
+	u32 ppc_rotator;
+	u32 ppc_scaler;
+	u32 delay_comp;
+	u32 delay_scaler;
+	u32 inner_width;
+	u32 bus_width;
+	u32 rot_util;
+	u32 bw_weight;
+	u32 dfs_lv_cnt;
+	u32 dfs_lv[BTS_DFS_MAX];
+	u32 sbwc_lib_boost;
+#if IS_ENABLED(CONFIG_EXYNOS_BTS) || IS_ENABLED(CONFIG_EXYNOS_BTS_MODULE)
 	struct decon_bts_bw bw[BTS_DPP_MAX];
 
 	/* each decon must know other decon's BW to get overall BW */
-	u32 ch_bw[3][BTS_DPU_MAX];
+	u32 ch_bw[MAX_DECON_CNT][BTS_DPU_MAX];
 	int bw_idx;
 	u32 scen_idx[DPU_BS_MAX];
 	struct bts_decon_info bts_info;
 #endif
 	struct decon_bts_ops *ops;
-	struct pm_qos_request mif_qos;
-	struct pm_qos_request int_qos;
-	struct pm_qos_request disp_qos;
+	struct exynos_pm_qos_request mif_qos;
+	struct exynos_pm_qos_request int_qos;
+	struct exynos_pm_qos_request disp_qos;
 	u32 scen_updated;
 };
 
@@ -1317,28 +1358,10 @@ struct decon_freq_hop {
 	u32 request_k;	/* user requested k value */
 };
 
-#ifdef CONFIG_SUPPORT_DISPLAY_PROFILER
-struct profile_data {
-	unsigned int win_cnt;
-};
-#endif
-
 struct decon_edid_data {
 	int size;
 	u8 edid_data[EDID_BLOCK_SIZE * MAX_EDID_BLOCK];
 };
-
-#ifdef DEBUG_DMA_BUF_LEAK
-#define LEAK_INFO_ARRAY_CNT		20
-
-struct dma_leak_info {
-	u32 type;
-	int import_cnt;
-	int free_cnt;
-	ktime_t import_time;
-	ktime_t free_time;
-};
-#endif
 
 struct vsync_applied_time_data {
 	u32 config;
@@ -1350,6 +1373,9 @@ struct decon_device {
 	int id;
 	enum decon_state state;
 	struct mutex pwr_state_lock;
+#if defined(SYSFS_UNITTEST_INTERFACE)
+	u64 irq_err_state;
+#endif
 
 	unsigned long prev_used_dpp;
 	unsigned long cur_using_dpp;
@@ -1364,7 +1390,8 @@ struct decon_device {
 #if defined(CONFIG_EXYNOS_READ_ESD_SOLUTION)
 	struct decon_esd esd;
 #endif
-#if defined(CONFIG_EXYNOS_COMMON_PANEL) || \
+
+#if IS_ENABLED(CONFIG_MCD_PANEL) || \
 	defined(CONFIG_EXYNOS_READ_ESD_SOLUTION)
 	atomic_t bypass;
 	struct decon_reg_data last_regs;
@@ -1372,7 +1399,6 @@ struct decon_device {
 
 	struct v4l2_subdev *out_sd[MAX_DSIM_CNT];
 	struct v4l2_subdev *dsim_sd[MAX_DSIM_CNT];
-	/* TODO: MAX_DPP_SUBDEV wil be changed to MAX_DPP_CNT */
 	struct v4l2_subdev *dpp_sd[MAX_DPP_SUBDEV];
 	struct v4l2_subdev *displayport_sd;
 	struct v4l2_device v4l2_dev;
@@ -1396,17 +1422,22 @@ struct decon_device {
 	struct decon_fence fence;
 	struct decon_freq_hop freq_hop;
 	struct decon_readback readback;
-	struct decon_win_rawdata win_raw;
 
-	unsigned long wc_idx;
+#if IS_ENABLED(CONFIG_EXYNOS_SBWC_LIBREQ)
+	int wfd_en;
+	atomic_t wb_power_refcnt;
+#endif
+
+#if defined(CONFIG_EXYNOS_SUPPORT_HWFC)
+	struct shared_buffer_info *repeater_buf_info;
+	u32 hwfc_buf_idx;
+	struct decon_dma_buf_data dma_buf_data[MAX_SHARED_BUF_NUM];
+#endif
+
 	int frame_cnt;
-	ktime_t frame_time;
 	int frame_cnt_target;
 	wait_queue_head_t wait_vstatus;
 	int eint_status;
-#if defined(CONFIG_LOGGING_BIGDATA_BUG)
-	int eint_pend;
-#endif
 
 	u32 prev_protection_bitmask;
 	unsigned long prev_aclk_khz;
@@ -1414,11 +1445,11 @@ struct decon_device {
 	atomic_t is_shutdown;
 	bool up_list_saved;
 
-#if defined(CONFIG_EXYNOS_ITMON)
+#if IS_ENABLED(CONFIG_EXYNOS_ITMON)
 	struct notifier_block itmon_nb;
 	bool notified;
 #endif
-#if defined(CONFIG_EXYNOS_PD)
+#if IS_ENABLED(CONFIG_EXYNOS_PD)
 	struct exynos_pm_domain *pm_domain;
 #endif
 	unsigned long prev_hdr_bits;
@@ -1430,29 +1461,24 @@ struct decon_device {
 	bool mres_enabled;
 	bool low_persistence;
 
-#if IS_ENABLED(CONFIG_EXYNOS_FPS_CHANGE_NOTIFY)
-	/* display LCD fps change notifier */
-	struct atomic_notifier_head fps_change_notifier_list;
+#if defined(CONFIG_EXYNOS_PLL_SLEEP)
+	struct mutex tui_pll_lock;
+	atomic_t pll_sleep_masked;
 #endif
-	int color_mode;
 
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	struct v4l2_subdev *panel_sd;
 	struct panel_state *panel_state;
 	struct decon_fsync fsync;
-#endif
+	ktime_t frame_time;
 
-#if defined(CONFIG_DISPLAY_USE_INFO)
-	struct notifier_block dpui_notif;
+	struct mcd_decon_device mcd_decon;
 #endif
-
-#ifdef CONFIG_EXYNOS_MCD_HDR
-	struct lcd_hdr_info hdr_info;
+#ifdef CONFIG_SUPPORT_DISPLAY_PROFILER
+	struct v4l2_subdev *profile_sd;
 #endif
-
-#ifdef CONFIG_DYNAMIC_FREQ
-	ktime_t last_update_time;
-	struct df_status_info *df_status;
+#if defined(CONFIG_EXYNOS_DECON_DQE)
+	bool dqe_cgc_idx;
 #endif
 
 #ifdef CONFIG_SUPPORT_MASK_LAYER
@@ -1460,33 +1486,7 @@ struct decon_device {
 	u32 wait_mask_layer_trigger;
 	wait_queue_head_t wait_mask_layer_trigger_queue;
 #endif
-
-#ifdef CONFIG_PROFILE_WINCONFIG
-	ktime_t exit_hiber_time;
-#endif
-#ifdef CONFIG_SUPPORT_DISPLAY_PROFILER
-	struct v4l2_subdev *profile_sd;
-#endif
-
-#ifdef DEBUG_DMA_BUF_LEAK
-	int import_cnt;
-	int free_cnt;
-	ktime_t import_time;
-	struct dma_leak_info leak_info[LEAK_INFO_ARRAY_CNT];
-	int leak_cnt;
-#endif
-
 };
-#ifdef CONFIG_EXYNOS_MCD_HDR
-
-#define MAX_HDR10P_LUT 42
-
-struct dpp_hdr10_info {
-	enum exynos_video_info_type type;
-	unsigned int lut[MAX_HDR10P_LUT];
-	unsigned int dst_max_luminance;
-};
-#endif
 
 static inline struct decon_device *get_decon_drvdata(u32 id)
 {
@@ -1497,7 +1497,26 @@ static inline struct decon_device *get_decon_drvdata(u32 id)
 static inline u32 decon_read(u32 id, u32 reg_id)
 {
 	struct decon_device *decon = get_decon_drvdata(id);
-	return readl(decon->res.regs + reg_id);
+	int offset = 0;
+
+	switch (id) {
+	case 0:
+		offset = 0x0000;
+		break;
+	case 1:
+		offset = 0x1000;
+		break;
+	case 2:
+		offset = 0x2000;
+		break;
+	case 3:
+		offset = 0x3000;
+		break;
+	default:
+		offset = 0x0000;
+	}
+
+	return readl(decon->res.regs + offset + reg_id);
 }
 
 static inline u32 decon_read_mask(u32 id, u32 reg_id, u32 mask)
@@ -1510,7 +1529,26 @@ static inline u32 decon_read_mask(u32 id, u32 reg_id, u32 mask)
 static inline void decon_write(u32 id, u32 reg_id, u32 val)
 {
 	struct decon_device *decon = get_decon_drvdata(id);
-	writel(val, decon->res.regs + reg_id);
+	int offset = 0;
+
+	switch (id) {
+	case 0:
+		offset = 0x0000;
+		break;
+	case 1:
+		offset = 0x1000;
+		break;
+	case 2:
+		offset = 0x2000;
+		break;
+	case 3:
+		offset = 0x3000;
+		break;
+	default:
+		offset = 0x0000;
+	}
+
+	writel(val, decon->res.regs + offset + reg_id);
 }
 
 static inline void decon_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
@@ -1521,28 +1559,144 @@ static inline void decon_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
 	decon_write(id, reg_id, val);
 }
 
-static inline u32 dsc_read(u32 dsc_id, u32 reg_id)
+/* decon_win */
+static inline u32 win_read(u32 id, u32 reg_id)
 {
-	struct decon_device *decon = get_decon_drvdata(0);
-	u32 dsc_offset = dsc_id ? DSC1_OFFSET : DSC0_OFFSET;
-
-	return readl(decon->res.regs + dsc_offset + reg_id);
+	struct decon_device *decon = get_decon_drvdata(id);
+	return readl(decon->res.win_regs + reg_id);
 }
 
-static inline void dsc_write(u32 dsc_id, u32 reg_id, u32 val)
+static inline u32 win_read_mask(u32 id, u32 reg_id, u32 mask)
 {
-	struct decon_device *decon = get_decon_drvdata(0);
-	u32 dsc_offset = dsc_id ? DSC1_OFFSET : DSC0_OFFSET;
-
-	writel(val, decon->res.regs + dsc_offset + reg_id);
+	u32 val = win_read(id, reg_id);
+	val &= (mask);
+	return val;
 }
 
-static inline void dsc_write_mask(u32 dsc_id, u32 reg_id, u32 val, u32 mask)
+static inline void win_write(u32 id, u32 reg_id, u32 val)
 {
-	u32 old = dsc_read(dsc_id, reg_id);
+	struct decon_device *decon = get_decon_drvdata(id);
+	writel(val, decon->res.win_regs + reg_id);
+}
+
+static inline void win_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
+{
+	u32 old = win_read(id, reg_id);
 
 	val = (val & mask) | (old & ~mask);
-	dsc_write(dsc_id, reg_id, val);
+	win_write(id, reg_id, val);
+}
+
+/* decon_wincon */
+static inline u32 wincon_read(u32 id, u32 reg_id)
+{
+	struct decon_device *decon = get_decon_drvdata(id);
+	return readl(decon->res.wincon_regs + reg_id);
+}
+
+static inline u32 wincon_read_mask(u32 id, u32 reg_id, u32 mask)
+{
+	u32 val = wincon_read(id, reg_id);
+	val &= (mask);
+	return val;
+}
+
+static inline void wincon_write(u32 id, u32 reg_id, u32 val)
+{
+	struct decon_device *decon = get_decon_drvdata(id);
+	writel(val, decon->res.wincon_regs + reg_id);
+}
+
+static inline void wincon_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
+{
+	u32 old = wincon_read(id, reg_id);
+
+	val = (val & mask) | (old & ~mask);
+	wincon_write(id, reg_id, val);
+}
+
+/* decon_sub.dsimif */
+static inline u32 dsimif_read(u32 reg_id)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+	return readl(decon->res.sub_regs + reg_id);
+}
+
+static inline u32 dsimif_read_mask(u32 reg_id, u32 mask)
+{
+	u32 val = dsimif_read(reg_id);
+	val &= (mask);
+	return val;
+}
+
+static inline void dsimif_write(u32 reg_id, u32 val)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+	writel(val, decon->res.sub_regs + reg_id);
+}
+
+static inline void dsimif_write_mask(u32 reg_id, u32 val, u32 mask)
+{
+	u32 old = dsimif_read(reg_id);
+
+	val = (val & mask) | (old & ~mask);
+	dsimif_write(reg_id, val);
+}
+
+/* decon_sub.dpif */
+static inline u32 dpif_read(u32 reg_id)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+	return readl(decon->res.sub_regs + reg_id);
+}
+
+static inline u32 dpif_read_mask(u32 reg_id, u32 mask)
+{
+	u32 val = dpif_read(reg_id);
+	val &= (mask);
+	return val;
+}
+
+static inline void dpif_write(u32 reg_id, u32 val)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+	writel(val, decon->res.sub_regs + reg_id);
+}
+
+static inline void dpif_write_mask(u32 reg_id, u32 val, u32 mask)
+{
+	u32 old = dpif_read(reg_id);
+
+	val = (val & mask) | (old & ~mask);
+	dpif_write(reg_id, val);
+}
+
+/* decon_sub.dsc */
+static inline u32 dsc_read(u32 reg_id)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+	return readl(decon->res.sub_regs + reg_id);
+}
+
+static inline void dsc_write(u32 reg_id, u32 val)
+{
+	struct decon_device *decon = get_decon_drvdata(0);
+	writel(val, decon->res.sub_regs + reg_id);
+}
+
+static inline u32 dsc_read_mask(u32 reg_id, u32 mask)
+{
+	u32 val = dsc_read(reg_id);
+	val &= (mask);
+	return val;
+}
+
+static inline void dsc_write_mask(u32 reg_id, u32 val, u32 mask)
+{
+	u32 old = dsc_read(reg_id);
+
+	val = (val & mask) | (old & ~mask);
+	dsc_write(reg_id, val);
 }
 
 static inline u32 sysreg_read(u32 id, u32 reg_id)
@@ -1576,9 +1730,7 @@ static inline void sysreg_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
 bool decon_validate_x_alignment(struct decon_device *decon, int x, u32 w,
 		u32 bits_per_pixel);
 int decon_wait_for_vsync(struct decon_device *decon, u32 timeout);
-#if defined(CONFIG_DECON_VRR_MODULATION)
-int decon_wait_for_active_region(struct decon_device *decon, u32 timeout);
-#endif
+void decon_wait_for_vstatus(struct decon_device *decon, u32 timeout);
 int decon_check_limitation(struct decon_device *decon, int idx,
 		struct decon_win_config *config);
 void decon_readback_wq(struct work_struct *work);
@@ -1592,12 +1744,14 @@ int decon_get_pinctrl(struct decon_device *decon);
 int decon_register_ext_irq(struct decon_device *decon);
 int decon_create_vsync_thread(struct decon_device *decon);
 void decon_destroy_vsync_thread(struct decon_device *decon);
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 int decon_create_fsync_thread(struct decon_device *decon);
 void decon_destroy_fsync_thread(struct decon_device *decon);
 int decon_create_last_info(struct decon_device *decon);
 void decon_destroy_last_info(struct decon_device *decon);
 #endif
+
 int decon_create_esd_thread(struct decon_device *decon);
 void decon_destroy_esd_thread(struct decon_device *decon);
 int decon_create_psr_info(struct decon_device *decon);
@@ -1665,7 +1819,7 @@ void dpu_set_vrr_config(struct decon_device *decon,
 /* DPHY PLL frequency hopping feature related functions */
 void dpu_init_freq_hop(struct decon_device *decon);
 void dpu_update_freq_hop(struct decon_device *decon);
-void dpu_set_freq_hop(struct decon_device *decon, struct decon_reg_data *regs, bool en);
+void dpu_set_freq_hop(struct decon_device *decon, bool en);
 
 /* internal only function API */
 int decon_check_var(struct fb_var_screeninfo *var, struct fb_info *info);
@@ -1768,6 +1922,7 @@ static inline bool decon_hiber_enter_cond(struct decon_device *decon)
 			decon->hiber.hiber_enter_cnt));
 }
 
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 #define WAKE_TIMEOUT_MSEC	(100)
 #if defined(CONFIG_EXYNOS_DOZE_HIBERNATION)
 int decon_register_doze_hiber_work(struct decon_device *decon);
@@ -1798,7 +1953,7 @@ static inline int decon_doze_wake_lock(struct decon_device *decon,
 		unsigned long timeout)
 {
 	s64 elapsed_usec;
-	struct timespec cur_ts, last_ts, delta_ts;
+	struct timespec64 cur_ts, last_ts, delta_ts;
 	unsigned long timeout_jiffies;
 	bool wakeup = false;
 
@@ -1806,7 +1961,7 @@ static inline int decon_doze_wake_lock(struct decon_device *decon,
 		return -EINVAL;
 
 	timeout_jiffies = jiffies + msecs_to_jiffies(timeout);
-	ktime_get_ts(&last_ts);
+	ktime_get_ts64(&last_ts);
 	decon_dbg("%s (%s) cnt:%d +\n",
 		__func__, get_decon_state_name(decon->state),
 			atomic_read(&decon->doze_hiber.block_cnt));
@@ -1833,9 +1988,9 @@ static inline int decon_doze_wake_lock(struct decon_device *decon,
 			__func__, get_decon_state_name(decon->state),
 			atomic_read(&decon->doze_hiber.block_cnt));
 
-	ktime_get_ts(&cur_ts);
-	delta_ts = timespec_sub(cur_ts, last_ts);
-	elapsed_usec = timespec_to_ns(&delta_ts) / 1000;
+	ktime_get_ts64(&cur_ts);
+	delta_ts = timespec64_sub(cur_ts, last_ts);
+	elapsed_usec = timespec64_to_ns(&delta_ts) / 1000;
 	if (elapsed_usec > 20000) {
 		decon_warn("%s (elapsed %2lld.%03lld msec)\n",
 				__func__, elapsed_usec / 1000, elapsed_usec % 1000);
@@ -1862,47 +2017,35 @@ static inline void decon_doze_wake_unlock(struct decon_device *decon)
 			__func__, get_decon_state_name(decon->state),
 			atomic_read(&decon->doze_hiber.block_cnt));
 }
+#endif /* CONFIG_EXYNOS_DOZE_HIBERNATION */
 
 static inline int decon_wake_lock(struct decon_device *decon,
 		unsigned long timeout)
 {
-	int ret;
+	int ret = 0;
+
+	if (!decon)
+		return -EINVAL;
 
 	decon_hiber_block_exit(decon);
+#if defined(CONFIG_EXYNOS_DOZE_HIBERNATION)
 	ret = decon_doze_wake_lock(decon, timeout);
+#endif
 
 	return ret;
 }
 
 static inline void decon_wake_unlock(struct decon_device *decon)
 {
+	if (!decon)
+		return;
+
+#if defined(CONFIG_EXYNOS_DOZE_HIBERNATION)
 	decon_doze_wake_unlock(decon);
+#endif
 	decon_hiber_unblock(decon);
 }
-
-static inline int decon_wake_lock_global(u32 id, unsigned long timeout)
-{
-	struct decon_device *decon = get_decon_drvdata(id);
-
-	return decon_wake_lock(decon, timeout);
-}
-
-static inline void decon_wake_unlock_global(u32 id)
-{
-	struct decon_device *decon = get_decon_drvdata(id);
-
-	decon_wake_unlock(decon);
-}
-#else
-static inline int decon_wake_lock_global(u32 id, unsigned long timeout)
-{
-	return 0;
-}
-static inline void decon_wake_unlock_global(u32 id)
-{
-	return;
-}
-#endif
+#endif /* CONFIG_MCD_PANEL */
 
 static inline void decon_enter_shutdown(struct decon_device *decon)
 {
@@ -1919,7 +2062,7 @@ static inline void decon_enter_shutdown_reset(struct decon_device *decon)
 	atomic_set(&decon->is_shutdown, 0);
 }
 
-#if defined(CONFIG_EXYNOS_COMMON_PANEL) || \
+#if IS_ENABLED(CONFIG_MCD_PANEL) || \
 	defined(CONFIG_EXYNOS_READ_ESD_SOLUTION)
 static inline void decon_set_bypass(struct decon_device *decon, bool on)
 {
@@ -1942,7 +2085,19 @@ static inline bool decon_is_bypass(struct decon_device *decon)
 }
 #endif
 
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if defined(CONFIG_EXYNOS_PLL_SLEEP)
+static inline void decon_set_pll_sleep_masked(struct decon_device *decon, bool on)
+{
+	atomic_set(&decon->pll_sleep_masked, !!on);
+}
+
+static inline bool decon_get_pll_sleep_masked(struct decon_device *decon)
+{
+	return atomic_read(&decon->pll_sleep_masked);
+}
+#endif
+
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 /* TODO : remove decon global function */
 static inline void decon_set_bypass_global(u32 id, bool on)
 {
@@ -1993,13 +2148,6 @@ static inline int decon_reset_panel_global(u32 id)
 	return decon_reset_panel(decon);
 }
 #endif
-
-int decon_update_pwr_state(struct decon_device *decon, u32 mode);
-
-#ifdef CONFIG_LOGGING_BIGDATA_BUG
-void log_decon_bigdata(struct decon_device *decon);
-#endif
-
 enum disp_pwr_mode {
 	DISP_PWR_OFF = 0,
 	DISP_PWR_DOZE,
@@ -2035,7 +2183,7 @@ static inline bool IS_DECON_OFF_STATE(struct decon_device *decon)
 		decon->state == DECON_STATE_OFF;
 }
 
-#ifdef CONFIG_EXYNOS_DOZE
+#if defined(CONFIG_EXYNOS_DOZE) && IS_ENABLED(CONFIG_MCD_PANEL)
 static inline bool IS_DECON_DOZE_STATE(struct decon_device *decon)
 {
 	return decon->state == DECON_STATE_DOZE ||
@@ -2065,10 +2213,8 @@ void dpu_unify_rect(struct decon_rect *r1, struct decon_rect *r2,
 		struct decon_rect *dst);
 void dpu_save_fence_info(int fd, struct dma_fence *fence,
 		struct dpu_fence_info *fence_info);
-void dpu_show_readback_buf_info(struct decon_device *decon, u32 diff_cnt);
-void dpu_show_dma_attach_info(char *fn, struct decon_device *decon, u32 sel);
 
-void decon_dump(struct decon_device *decon, bool panel_dump);
+void decon_dump(struct decon_device *decon);
 void decon_to_psr_info(struct decon_device *decon, struct decon_mode_info *psr);
 void decon_to_init_param(struct decon_device *decon, struct decon_param *p);
 void decon_create_timeline(struct decon_device *decon, char *name);
@@ -2088,11 +2234,10 @@ bool is_scaling(struct decon_win_config *config);
 bool is_full(struct decon_rect *r, struct exynos_panel_info *lcd);
 void __iomem *dpu_get_sysreg_addr(void);
 void dpu_dump_afbc_info(void);
-#if defined(CONFIG_EXYNOS_CONTENT_PATH_PROTECTION)
+#if IS_ENABLED(CONFIG_EXYNOS_CONTENT_PATH_PROTECTION)
 void decon_set_protected_content(struct decon_device *decon,
 		struct decon_reg_data *regs);
 #endif
-bool is_decon_rect_empty(struct decon_rect *r);
 
 int decon_runtime_suspend(struct device *dev);
 int decon_runtime_resume(struct device *dev);
@@ -2106,28 +2251,15 @@ void dpu_cursor_win_update_config(struct decon_device *decon,
 		struct decon_reg_data *regs);
 int decon_set_cursor_win_config(struct decon_device *decon, int x, int y);
 void dpu_init_cursor_mode(struct decon_device *decon);
-
-int dpu_sysmmu_fault_handler(struct iommu_domain *domain,
-	struct device *dev, unsigned long iova, int flags, void *token);
-#if defined(CONFIG_EXYNOS_PD)
+int dpu_sysmmu_fault_handler_dsim(struct iommu_fault *fault, void *data);
+int dpu_sysmmu_fault_handler_displayport(struct iommu_fault *fault, void *data);
+int dpu_sysmmu_fault_handler_wb(struct iommu_fault *fault, void *data);
+#if IS_ENABLED(CONFIG_EXYNOS_PD)
 int dpu_pm_domain_check_status(struct exynos_pm_domain *pm_domain);
 #endif
 int decon_set_out_sd_state(struct decon_device *decon, enum decon_state state);
 int decon_update_last_regs(struct decon_device *decon,
 		struct decon_reg_data *regs);
-
-/* display LCD on/off notifier */
-static ATOMIC_NOTIFIER_HEAD(lcd_status_notifier_list);
-
-int register_lcd_status_notifier(struct notifier_block *nb);
-int unregister_lcd_status_notifier(struct notifier_block *nb);
-void lcd_status_notifier(u32 lcd_status);
-
-#if IS_ENABLED(CONFIG_EXYNOS_FPS_CHANGE_NOTIFY)
-int register_fps_change_notifier(struct notifier_block *nb);
-int unregister_fps_change_notifier(struct notifier_block *nb);
-void notify_fps_change(u32 fps);
-#endif
 
 void decon_hiber_start(struct decon_device *decon);
 void decon_hiber_finish(struct decon_device *decon);
@@ -2137,14 +2269,29 @@ void dpu_pll_sleep_mask(struct decon_device *decon);
 void dpu_pll_sleep_unmask(struct decon_device *decon);
 
 u32 decon_processed_linecnt(struct decon_device *decon);
+
+void dpu_update_fps(struct decon_device *decon, u32 fps);
+
+void decon_update_win_update(struct decon_device *decon,
+		struct decon_reg_data *regs);
+
+#if defined(CONFIG_EXYNOS_SUPPORT_HWFC)
+extern int repeater_request_buffer(struct shared_buffer_info *info, int owner);
+extern int repeater_get_valid_buffer(int *buf_idx);
+extern int repeater_set_valid_buffer(int buf_idx, int capture_idx);
+#endif
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 int _decon_disable(struct decon_device *decon, enum decon_state state);
 int _decon_enable(struct decon_device *decon, enum decon_state state);
+#endif
 
 /* IOCTL commands */
 #define S3CFB_SET_VSYNC_INT		_IOW('F', 206, __u32)
 #define S3CFB_DECON_SELF_REFRESH	_IOW('F', 207, __u32)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 #define S3CFB_WIN_CONFIG_OLD		_IOW('F', 209, \
 						struct decon_win_config_data_old)
+#endif
 #define S3CFB_WIN_CONFIG		_IOW('F', 209, \
 						struct decon_win_config_data)
 
@@ -2183,32 +2330,33 @@ int _decon_enable(struct decon_device *decon, enum decon_state state);
 #define EXYNOS_GET_COLOR_MODE		_IOW('F', 601, struct decon_color_mode_info)
 #define EXYNOS_SET_COLOR_MODE		_IOW('F', 602, __u32)
 
-#if defined(CONFIG_EXYNOS_DECON_DQE)
 #define EXYNOS_GET_RENDER_INTENTS_NUM	_IOW('F', 610, struct decon_render_intents_num_info)
 #define EXYNOS_GET_RENDER_INTENT	_IOW('F', 611, struct decon_render_intent_info)
 
 #define EXYNOS_SET_COLOR_TRANSFORM	_IOW('F', 612, struct decon_color_transform_info)
 #define EXYNOS_SET_COLOR_MODE_WITH_RENDER_INTENT	_IOW('F', 613, struct decon_color_mode_with_render_intent_info)
-#endif
 
 /* Readback */
 #define EXYNOS_GET_READBACK_ATTRIBUTE	_IOW('F', 614, struct decon_readback_attribute)
 
-#ifdef CONFIG_EXYNOS_SET_ACTIVE
+#if defined(CONFIG_EXYNOS_SUPPORT_HWFC)
+/* HardwareFlowControl */
+#define EXYNOS_SET_REPEATER_BUF	_IOW('F', 615, bool)
+#endif
+
 /* Display Mode Support */
 #define EXYNOS_GET_DISPLAY_MODE_NUM	_IOW('F', 700, u32)
-#define EXYNOS_GET_DISPLAY_MODE_OLD		_IOW('F', 701, struct exynos_display_mode_old)
 #define EXYNOS_GET_DISPLAY_MODE		_IOW('F', 701, struct exynos_display_mode)
-#define EXYNOS_SET_DISPLAY_MODE		_IOW('F', 702, struct exynos_display_mode)
+
 #define EXYNOS_GET_DISPLAY_CURRENT_MODE _IOW('F', 705, u32)
-#endif
+
 /* EDID data */
 #define EXYNOS_GET_EDID		_IOW('F', 800, struct decon_edid_data)
 
 /* For HWC2.4 */
 #define EXYNOS_GET_VSYNC_CHANGE_TIMELINE	_IOW('F', 850, struct vsync_applied_time_data)
 
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 #define V4L2_EVENT_DECON                (V4L2_EVENT_PRIVATE_START + 1000)
 #define V4L2_EVENT_DECON_FRAME_START    (V4L2_EVENT_DECON + 1)
 #define V4L2_EVENT_DECON_FRAME_DONE     (V4L2_EVENT_DECON + 2)

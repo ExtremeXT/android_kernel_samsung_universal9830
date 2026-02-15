@@ -17,10 +17,9 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
-
 #include "exynos_panel_drv.h"
 
-int dpu_panel_log_level = 7;
+int dpu_panel_log_level = 6;
 
 struct exynos_panel_device *panel_drvdata[MAX_PANEL_DRV_SUPPORT];
 EXPORT_SYMBOL(panel_drvdata);
@@ -42,6 +41,11 @@ int exynos_panel_calc_slice_width(u32 dsc_cnt, u32 slice_num, u32 xres)
 	u32 comp_slice_width_pixel_unit;
 	u32 compressed_slice_w = 0;
 	u32 i, j;
+
+	if (dsc_cnt == 0) {
+		DPU_ERR_PANEL("invalid dsc_cnt(%d)\n", dsc_cnt);
+		return -EINVAL;
+	}
 
 	if (dsc_cnt == 2)
 		width_eff = xres >> 1;
@@ -96,6 +100,12 @@ static void exynos_panel_get_timing_info(struct exynos_panel_info *info,
 	info->vfp = res[1];
 	info->vsa = res[2];
 	DPU_DEBUG_PANEL("vbp(%d), vfp(%d), vsa(%d)\n", res[0], res[1], res[2]);
+
+	if (of_property_read_u32(np, "timing,v-blank-t", &info->v_blank_t)) {
+		info->v_blank_t = 100;
+		DPU_INFO_PANEL("WARN: v-blank-t is not defined in DT\n");
+	}
+	DPU_DEBUG_PANEL("v_blank_time(%d us)\n", info->v_blank_t);
 
 	of_property_read_u32(np, "timing,dsi-hs-clk", &info->hs_clk);
 	of_property_read_u32(np, "timing,dsi-escape-clk", &info->esc_clk);
@@ -309,21 +319,17 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 					info->display_mode[i].mode.width);
 		info->display_mode[i].dsc_dec_sw =
 			info->display_mode[i].mode.width / info->dsc.slice_num;
-
 		if ((i > 0) &&
 			((info->display_mode[i].mode.width != info->display_mode[i - 1].mode.width) ||
-			(info->display_mode[i].mode.height != info->display_mode[i - 1].mode.height))) {
+			(info->display_mode[i].mode.height != info->display_mode[i - 1].mode.height)))
 				disp_group++;
-			}
-
 		info->display_mode[i].mode.group = disp_group;
 
-		DPU_INFO_PANEL("found display mode[%d] : %dx%d@%d, group %d %dmm x %dmm, lp_ref(%d)\n",
+		DPU_INFO_PANEL("display mode[%d] : %dx%d@%d, %dmm x %dmm, lp_ref(%d)\n",
 				info->display_mode[i].mode.index,
 				info->display_mode[i].mode.width,
 				info->display_mode[i].mode.height,
 				info->display_mode[i].mode.fps,
-				info->display_mode[i].mode.group,
 				info->display_mode[i].mode.mm_width,
 				info->display_mode[i].mode.mm_height,
 				info->display_mode[i].cmd_lp_ref);
@@ -343,6 +349,17 @@ void parse_lcd_info(struct device_node *np, EXYNOS_PANEL_INFO *lcd_info)
 {
 	u32 res[2];
 
+	if (!np) {
+		DPU_ERR_PANEL("%s: null device_node\n", __func__);
+		return;
+	}
+
+	if (!lcd_info) {
+		DPU_ERR_PANEL("%s: null lcd_info\n", __func__);
+		return;
+	}
+
+	DPU_INFO_PANEL("%s +\n", __func__);
 	of_property_read_u32(np, "mode", &lcd_info->mode);
 	of_property_read_u32_array(np, "resolution", res, 2);
 	lcd_info->xres = res[0];
@@ -350,7 +367,7 @@ void parse_lcd_info(struct device_node *np, EXYNOS_PANEL_INFO *lcd_info)
 	of_property_read_u32(np, "timing,refresh", &lcd_info->fps);
 	DPU_INFO_PANEL("LCD(%s) resolution: %dx%d@%d, %s mode\n",
 			np->name, lcd_info->xres, lcd_info->yres,
-			lcd_info->fps, lcd_info->mode ? "command" : "video");
+			lcd_info->fps, lcd_info->mode == DECON_MIPI_COMMAND_MODE ? "command" : "video");
 
 	of_property_read_u32_array(np, "size", res, 2);
 	lcd_info->width = res[0];
@@ -371,6 +388,7 @@ void parse_lcd_info(struct device_node *np, EXYNOS_PANEL_INFO *lcd_info)
 #ifdef CONFIG_EXYNOS_SET_ACTIVE
 	exynos_panel_get_display_modes(lcd_info, np);
 #endif
+	DPU_INFO_PANEL("%s -\n", __func__);
 }
 
 static void exynos_panel_list_up(void)
@@ -402,8 +420,13 @@ static int exynos_panel_register(struct exynos_panel_device *panel, u32 id)
 
 	return 0;
 }
-
+//Todo: Need to change distinguish usnig kernel version feature
+#if 0
 static int __match_panel_v4l2_subdev(struct device *dev, void *data)
+#else
+static int __match_panel_v4l2_subdev(struct device *dev, const void *data)
+
+#endif
 {
 	struct panel_device *panel_drv;
 	struct exynos_panel_device *panel;
@@ -422,7 +445,7 @@ static int __match_panel_v4l2_subdev(struct device *dev, void *data)
 	return 0;
 }
 
-static int exynos_panel_find_panel_drv(struct exynos_panel_device *panel)
+int __mockable exynos_panel_find_panel_drv(struct exynos_panel_device *panel)
 {
 	struct device_driver *drv;
 	struct device *dev;
@@ -433,6 +456,7 @@ static int exynos_panel_find_panel_drv(struct exynos_panel_device *panel)
 	drv = driver_find(PANEL_DRV_NAME, &platform_bus_type);
 	if (IS_ERR_OR_NULL(drv)) {
 		DPU_ERR_PANEL("%s:failed to find driver\n", __func__);
+		BUG();
 		return -ENODEV;
 	}
 
@@ -454,9 +478,13 @@ static void exynos_panel_init_panel_drv(struct exynos_panel_device *panel)
 	int ret;
 
 	ret = call_panel_ops(panel, init, panel);
+	if (ret < 0) {
+		DPU_ERR_PANEL("panel-%d failed to call init\n", panel->id);
+		return;
+	}
 }
 
-int exynos_panel_parse_dt(struct exynos_panel_device *panel)
+int __mockable exynos_panel_parse_dt(struct exynos_panel_device *panel)
 {
 	int ret = 0;
 
@@ -484,6 +512,7 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 		ret = exynos_panel_register(panel, *(u32 *)arg);
 		break;
 	case EXYNOS_PANEL_IOC_RESET:
+		call_panel_ops(panel, reset_panel, panel);
 		break;
 	case EXYNOS_PANEL_IOC_DISPLAYON:
 		call_panel_ops(panel, displayon, panel);
@@ -509,7 +538,7 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 	case EXYNOS_PANEL_IOC_SET_VREFRESH:
 		call_panel_ops(panel, set_vrefresh, panel, (struct vrr_config_data*)arg);
 		break;
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	case EXYNOS_PANEL_IOC_INIT:
 		ret = call_panel_ops(panel, init, panel);
 		break;
@@ -583,54 +612,70 @@ static void exynos_panel_init_subdev(struct exynos_panel_device *panel)
 	DPU_INFO_PANEL("%s: panel sd name(%s)\n", __func__, sd->name);
 }
 
+struct exynos_panel_device *exynos_panel_create(void)
+{
+	struct exynos_panel_device *panel;
+
+	panel = kzalloc(sizeof(struct exynos_panel_device), GFP_KERNEL);
+	if (!panel) {
+		DPU_ERR_PANEL("failed to allocate panel structure\n");
+		return NULL;
+	}
+
+	return panel;
+}
+
+int exynos_panel_device_init(struct exynos_panel_device *panel)
+{
+	int ret;
+
+	DPU_DEBUG_PANEL("%s +\n", __func__);
+	mutex_init(&panel->ops_lock);
+
+	ret = exynos_panel_parse_dt(panel);
+	if (ret < 0) {
+		DPU_ERR_PANEL("failed to exynos_panle_parse_dt\n");
+		return ret;
+	}
+
+	exynos_panel_list_up();
+	exynos_panel_register_ops(panel);
+	exynos_panel_find_panel_drv(panel);
+	exynos_panel_init_subdev(panel);
+	exynos_panel_init_panel_drv(panel);
+
+	DPU_DEBUG_PANEL("%s -\n", __func__);
+	return 0;
+}
+
 static int exynos_panel_probe(struct platform_device *pdev)
 {
 	struct exynos_panel_device *panel;
 	int ret = 0;
 
-	DPU_DEBUG_PANEL("%s +\n", __func__);
-
-	panel = devm_kzalloc(&pdev->dev, sizeof(struct exynos_panel_device),
-			GFP_KERNEL);
-	if (IS_ERR_OR_NULL(panel)) {
-		DPU_ERR_PANEL("failed to allocate panel structure\n");
-		ret = -ENOMEM;
-		goto err;
-	}
+	panel = exynos_panel_create();
+	if (!panel)
+		return -ENOMEM;
 
 	panel->dev = &pdev->dev;
-
-	mutex_init(&panel->ops_lock);
-
-	ret = exynos_panel_parse_dt(panel);
-	if (ret) {
-		goto err;
+	platform_set_drvdata(pdev, panel);
+	panel_drvdata[panel->id] = panel;
+	ret = exynos_panel_device_init(panel);
+	if (ret < 0) {
+		DPU_ERR_PANEL("failed to exynos_panle_device_init\n");
+		kfree(panel);
+		return ret;
 	}
 
-	panel_drvdata[panel->id] = panel;
-
-	exynos_panel_list_up();
-	exynos_panel_register_ops(panel);
-	exynos_panel_find_panel_drv(panel);
-
-	exynos_panel_init_subdev(panel);
-	platform_set_drvdata(pdev, panel);
-
-	exynos_panel_init_panel_drv(panel);
-
 	DPU_DEBUG_PANEL("%s -\n", __func__);
-	return ret;
-
-err:
-	DPU_DEBUG_PANEL("%s -\n", __func__);
-	return ret;
+	return 0;
 }
 
 static void exynos_panel_shutdown(struct platform_device *pdev)
 {
 }
 
-static struct platform_driver exynos_panel_driver = {
+struct platform_driver exynos_panel_driver = {
 	.probe		= exynos_panel_probe,
 	.shutdown	= exynos_panel_shutdown,
 	.driver		= {
@@ -639,22 +684,6 @@ static struct platform_driver exynos_panel_driver = {
 		.suppress_bind_attrs = true,
 	},
 };
-
-static int __init exynos_panel_init(void)
-{
-	int ret = platform_driver_register(&exynos_panel_driver);
-	if (ret)
-		pr_err("exynos_panel_driver register failed\n");
-
-	return ret;
-}
-device_initcall(exynos_panel_init);
-
-static void __exit exynos_panel_exit(void)
-{
-	platform_driver_unregister(&exynos_panel_driver);
-}
-module_exit(exynos_panel_exit);
 
 MODULE_DESCRIPTION("Common Panel Driver");
 MODULE_LICENSE("GPL");

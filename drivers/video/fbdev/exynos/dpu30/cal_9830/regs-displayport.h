@@ -1561,9 +1561,9 @@
 
 /* PHY register */
 #if defined(CONFIG_SOC_EXYNOS9830_EVT0)
-#define DEFAULT_SFR_CNT			44 /* COMMON + DP settings */
+#define DEFAULT_SFR_CNT			44
 #else
-#define DEFAULT_SFR_CNT			19
+#define DEFAULT_SFR_CNT			21
 #endif
 
 #define CMN_REG0008				(0x0020)

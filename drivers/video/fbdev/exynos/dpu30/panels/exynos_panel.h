@@ -37,8 +37,8 @@ struct lcd_res_info {
 };
 
 struct lcd_mres_info {
-	u32 en;
-	u32 number;
+	unsigned int en;
+	unsigned int number;
 	struct lcd_res_info res_info[MAX_RES_NUMBER];
 };
 
@@ -79,41 +79,53 @@ struct stdphy_pms {
 };
 
 struct exynos_dsc {
-	u32 en;
-	u32 cnt;
-	u32 slice_num;
-	u32 slice_h;
-	u32 dec_sw;
-	u32 enc_sw;
+	unsigned int en;
+	unsigned int cnt;
+	unsigned int slice_num;
+	unsigned int slice_h;
+	unsigned int dec_sw;
+	unsigned int enc_sw;
 };
 
-/*
- * TODO : VRR NS/HS MODE need to be unified.
- * - dpu30/decon.h : WIN_VRR_NORMAL_MODE, WIN_VRR_HS_MODE
- * - dpu30/exynos_panel.h : EXYNOS_PANEL_VRR_NS_MODE, EXYNOS_PANEL_VRR_HS_MODE
- * - panel/panel.h : VRR_NORMAL_MODE, VRR_HS_MODE,
- */
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 enum {
 	EXYNOS_PANEL_VRR_NS_MODE = 0,
 	EXYNOS_PANEL_VRR_HS_MODE = 1,
+	EXYNOS_PANEL_VRR_PASSIVE_HS_MODE = 2,
 };
 
 static inline char *EXYNOS_VRR_MODE_STR(int vrr_mode)
 {
-	return (vrr_mode == EXYNOS_PANEL_VRR_NS_MODE) ?  "NS" : "HS";
+	if (vrr_mode == EXYNOS_PANEL_VRR_NS_MODE)
+		return "NS";
+	else if (vrr_mode == EXYNOS_PANEL_VRR_HS_MODE)
+		return "HS";
+	else if (vrr_mode == EXYNOS_PANEL_VRR_PASSIVE_HS_MODE)
+		return "pHS";
+	else
+		return "NONE";
 }
 
-#define MAX_DISPLAY_MODE		32
-/* exposed to user */
-struct exynos_display_mode_old {
-	u32 index;
-	u32 width;
-	u32 height;
-	u32 mm_width;
-	u32 mm_height;
-	u32 fps;
-};
+static inline bool IS_EXYNOS_VRR_NS_MODE(int vrr_mode)
+{
+	return (vrr_mode == EXYNOS_PANEL_VRR_NS_MODE);
+}
 
+static inline bool IS_EXYNOS_VRR_HS_MODE(int vrr_mode)
+{
+	return (vrr_mode == EXYNOS_PANEL_VRR_HS_MODE ||
+			vrr_mode == EXYNOS_PANEL_VRR_PASSIVE_HS_MODE);
+}
+
+static inline bool IS_EXYNOS_VRR_PASSIVE_MODE(int vrr_mode)
+{
+	return (vrr_mode == EXYNOS_PANEL_VRR_PASSIVE_HS_MODE);
+}
+#endif
+
+#define MAX_DISPLAY_MODE		32
+
+/* exposed to user */
 struct exynos_display_mode {
 	unsigned int index;
 	unsigned int width;
@@ -127,15 +139,17 @@ struct exynos_display_mode {
 /* used internally by driver */
 struct exynos_display_mode_info {
 	struct exynos_display_mode mode;
-	u32 cmd_lp_ref;
+	unsigned int cmd_lp_ref;
 	bool dsc_en;
-	u32 dsc_width;
-	u32 dsc_height;
-	u32 dsc_dec_sw;
-	u32 dsc_enc_sw;
+	unsigned int dsc_width;
+	unsigned int dsc_height;
+	unsigned int dsc_dec_sw;
+	unsigned int dsc_enc_sw;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	void *pdata;		/* used by common panel driver */
+#endif
 };
-
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 struct exynos_display_modes {
 	/*
 	 * exynos_display_mode_info get from
@@ -153,47 +167,13 @@ struct exynos_display_modes {
 	struct exynos_display_mode **modes;
 };
 
-#ifdef CONFIG_DYNAMIC_FREQ
-
-#define MAX_DYNAMIC_FREQ	5
-
-struct df_status_info {
-	bool enabled;
-	u32 request_df;
-	u32 target_df;
-	u32 current_df;
-	u32 ffc_df;
-	u32 context;
-
-	u32 current_ddi_osc;
-	u32 request_ddi_osc;
-};
-
-struct df_setting_info {
-	unsigned int hs;
-	struct stdphy_pms dphy_pms;
-	unsigned int cmd_underrun_lp_ref[MAX_RES_NUMBER];
-};
-
-struct df_dt_info {
-	int dft_index;
-	int df_cnt;
-	struct df_setting_info setting_info[MAX_DYNAMIC_FREQ];
-};
-
-struct df_param {
-	struct stdphy_pms pms;
-	unsigned int cmd_underrun_lp_ref[MAX_RES_NUMBER];
-	u32 context;
-};
-#endif
-
 #define MAX_COLOR_MODE		5
 
 struct  panel_color_mode {
 	int cnt;
 	int mode[MAX_COLOR_MODE];
 };
+#endif
 
 struct exynos_panel_info {
 	unsigned int id; /* panel id. It is used for finding connected panel */
@@ -205,12 +185,15 @@ struct exynos_panel_info {
 	unsigned int hbp;
 	unsigned int vsa;
 	unsigned int hsa;
+	unsigned int v_blank_t;
 
 	/* resolution */
 	unsigned int xres;
 	unsigned int yres;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	unsigned int old_xres;
 	unsigned int old_yres;
+#endif
 
 	/* physical size */
 	unsigned int width;
@@ -220,14 +203,17 @@ struct exynos_panel_info {
 	struct stdphy_pms dphy_pms;
 	unsigned int esc_clk;
 
+	unsigned int fps;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+	unsigned int cmd_lp_ref;
 	unsigned int req_vrr_fps;
 	unsigned int req_vrr_mode;
-	unsigned int fps;
 	unsigned int vrr_mode;
 	unsigned int panel_vrr_fps;
 	unsigned int panel_vrr_mode;
 	unsigned int panel_te_sw_skip_count;
 	unsigned int panel_te_hw_skip_count;
+#endif
 
 	struct exynos_dsc dsc;
 
@@ -237,17 +223,19 @@ struct exynos_panel_info {
 	struct lcd_mres_info mres;
 	struct lcd_hdr_info hdr;
 	unsigned int bpc;
-#ifdef CONFIG_DYNAMIC_FREQ
-	struct df_dt_info df_set_info;
-#endif
+
+	int display_mode_count;
 #if defined(CONFIG_EXYNOS_DECON_DQE)
 	char ddi_name[MAX_DDI_NAME_LEN];
 #endif
-	int display_mode_count;
 	unsigned int cur_mode_idx;
-	unsigned int req_mode_idx;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+	unsigned int panel_mode_idx;
+#endif
 	struct exynos_display_mode_info display_mode[MAX_DISPLAY_MODE];
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	struct panel_color_mode color_mode;
+#endif
 #if defined(CONFIG_PANEL_DISPLAY_MODE)
 	unsigned int cur_exynos_mode;
 	unsigned int req_exynos_mode;

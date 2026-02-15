@@ -49,6 +49,7 @@ typedef int (disp_error_cb)(void *data,
 		struct disp_check_cb_info *info);
 typedef int (disp_powerdown_cb)(void *data,
 		struct disp_check_cb_info *info);
+
 struct disp_error_cb_info {
 	disp_error_cb *error_cb;
 	disp_powerdown_cb *powerdown_cb;

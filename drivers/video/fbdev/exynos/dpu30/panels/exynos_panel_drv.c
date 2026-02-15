@@ -41,7 +41,7 @@ static int exynos_backlight_get_brightness(struct backlight_device *bl)
 
 static int exynos_backlight_update_status(struct backlight_device *bl)
 {
-	int brightness = bl->props.brightness;
+	u32 brightness = bl->props.brightness;
 	struct dsim_device *dsim;
 	struct exynos_panel_device *panel;
 
@@ -125,7 +125,6 @@ static int exynos_panel_parse_regulators(struct exynos_panel_device *panel)
 			res->regulator[0] = NULL;
 		}
 	}
-	DPU_INFO_PANEL("get regulator 1.8V");
 
 	if(!of_property_read_string(dev->of_node, "regulator_3p3v",
 				(const char **)&str_regulator[1])) {
@@ -135,7 +134,6 @@ static int exynos_panel_parse_regulators(struct exynos_panel_device *panel)
 			res->regulator[1] = NULL;
 		}
 	}
-	DPU_INFO_PANEL("get regulator 3.3V");
 
 	return 0;
 }
@@ -195,7 +193,6 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 			gpio_free(res->lcd_power[1]);
 			usleep_range(10000, 11000);
 		}
-		/*
 		if (res->regulator[0] > 0) {
 			ret = regulator_enable(res->regulator[0]);
 			if (ret) {
@@ -212,7 +209,6 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 				return ret;
 			}
 		}
-		*/
 	} else {
 		ret = gpio_request_one(res->lcd_reset, GPIOF_OUT_INIT_LOW,
 				"lcd_reset");
@@ -243,7 +239,6 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 			gpio_free(res->lcd_power[1]);
 			usleep_range(5000, 6000);
 		}
-		/*
 		if (res->regulator[0] > 0) {
 			ret = regulator_disable(res->regulator[0]);
 			if (ret) {
@@ -259,7 +254,6 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 				return ret;
 			}
 		}
-		*/
 	}
 
 	DPU_DEBUG_PANEL("%s(%d) -\n", __func__, on);
@@ -329,6 +323,12 @@ static void exynos_panel_get_timing_info(struct exynos_panel_info *info,
 	info->vfp = res[1];
 	info->vsa = res[2];
 	DPU_DEBUG_PANEL("vbp(%d), vfp(%d), vsa(%d)\n", res[0], res[1], res[2]);
+
+	if (of_property_read_u32(np, "timing,v-blank-t", &info->v_blank_t)) {
+		info->v_blank_t = 100;
+		DPU_INFO_PANEL("WARN: v-blank-t is not defined in DT\n");
+	}
+	DPU_DEBUG_PANEL("v_blank_time(%d us)\n", info->v_blank_t);
 
 	of_property_read_u32(np, "timing,dsi-hs-clk", &info->hs_clk);
 	of_property_read_u32(np, "timing,dsi-escape-clk", &info->esc_clk);
@@ -466,8 +466,6 @@ static void exynos_panel_get_hdr_info(struct exynos_panel_info *info,
 	}
 }
 
-#ifdef CONFIG_EXYNOS_SET_ACTIVE
-
 #define DISPLAY_MODE_ITEM_CNT	7
 
 static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
@@ -478,6 +476,7 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 	int i;
 	const unsigned int *addr;
 	unsigned int *mode_item;
+	u32 disp_group = 0;
 
 	DPU_INFO_PANEL("%s +\n", __func__);
 
@@ -515,6 +514,11 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 			info->display_mode[i].dsc_dec_sw =
 				info->display_mode[i].mode.width / info->dsc.slice_num;
 		}
+		if ((i > 0) &&
+			((info->display_mode[i].mode.width != info->display_mode[i - 1].mode.width) ||
+			(info->display_mode[i].mode.height != info->display_mode[i - 1].mode.height)))
+				disp_group++;
+		info->display_mode[i].mode.group = disp_group;
 
 		DPU_INFO_PANEL("display mode[%d] : %dx%d@%d, %dmm x %dmm, lp_ref(%d)\n",
 				info->display_mode[i].mode.index,
@@ -534,7 +538,6 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 
 	DPU_INFO_PANEL("%s -\n", __func__);
 }
-#endif
 
 static void exynos_panel_parse_lcd_info(struct exynos_panel_device *panel,
 		struct device_node *np)
@@ -577,17 +580,18 @@ static void exynos_panel_parse_lcd_info(struct exynos_panel_device *panel,
 	exynos_panel_get_dsc_info(lcd_info, np);
 	exynos_panel_get_mres_info(lcd_info, np);
 	exynos_panel_get_hdr_info(lcd_info, np);
-#ifdef CONFIG_EXYNOS_SET_ACTIVE
 	exynos_panel_get_display_modes(lcd_info, np);
-#endif
 }
 
 static void exynos_panel_list_up(void)
 {
-	panel_list[0] = &panel_s6e3hab_ops;
-	panel_list[1] = &panel_s6e3ha9_ops;
-	panel_list[2] = &panel_s6e3ha8_ops;
-	panel_list[3] = &panel_s6e3fa0_ops;
+	panel_list[0] = &panel_emul_ops;
+	panel_list[1] = &panel_s6e3hab_ops;
+	panel_list[2] = &panel_s6e3ha9_ops;
+	panel_list[3] = &panel_s6e3ha8_ops;
+	panel_list[4] = &panel_s6e3fa0_ops;
+	panel_list[5] = &panel_s6e3fab_ops;
+	panel_list[6] = &panel_s6e3had_ops;
 }
 
 static int exynos_panel_register_ops(struct exynos_panel_device *panel)
@@ -674,6 +678,10 @@ static void exynos_panel_find_id(struct exynos_panel_device *panel)
 		return;
 	}
 
+#if defined(CONFIG_EXYNOS_EMUL_DISP)
+	id = 0xFFFFFF; /* emul_display id */
+#endif
+
 	DPU_INFO_PANEL("%s: panel id(0x%x) in DT\n", __func__, id);
 
 	exynos_panel_register(panel, id);
@@ -711,6 +719,7 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 	int ret = 0;
 
 	panel = container_of(sd, struct exynos_panel_device, sd);
+
 
 	switch (cmd) {
 	case EXYNOS_PANEL_IOC_REGISTER:
@@ -750,7 +759,7 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 		call_panel_ops(panel, set_light, panel, *(int *)arg);
 		break;
 	case EXYNOS_PANEL_IOC_SET_VREFRESH:
-		call_panel_ops(panel, set_vrefresh, panel, (struct vrr_config_data*)arg);
+		call_panel_ops(panel, set_vrefresh, panel, *(int *)arg);
 		break;
 	default:
 		DPU_ERR_PANEL("not supported ioctl by panel driver\n");
@@ -896,7 +905,7 @@ static void exynos_panel_shutdown(struct platform_device *pdev)
 	backlight_device_unregister(panel->bl);
 }
 
-static struct platform_driver exynos_panel_driver = {
+struct platform_driver exynos_panel_driver = {
 	.probe		= exynos_panel_probe,
 	.shutdown	= exynos_panel_shutdown,
 	.driver		= {
@@ -905,22 +914,6 @@ static struct platform_driver exynos_panel_driver = {
 		.suppress_bind_attrs = true,
 	},
 };
-
-static int __init exynos_panel_init(void)
-{
-	int ret = platform_driver_register(&exynos_panel_driver);
-	if (ret)
-		pr_err("exynos_panel_driver register failed\n");
-
-	return ret;
-}
-device_initcall(exynos_panel_init);
-
-static void __exit exynos_panel_exit(void)
-{
-	platform_driver_unregister(&exynos_panel_driver);
-}
-module_exit(exynos_panel_exit);
 
 MODULE_DESCRIPTION("Exynos Common Panel Driver");
 MODULE_LICENSE("GPL");

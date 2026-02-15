@@ -23,13 +23,14 @@
 #if defined(CONFIG_EXTCON)
 #include <linux/extcon-provider.h>
 #endif
-#if defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
+#if IS_ENABLED(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
 #include <linux/usb/typec/manager/usb_typec_manager_notifier.h>
 #include <linux/usb/typec/common/pdic_notifier.h>
 #endif
-#include <linux/dp_logger.h>
+
+#include "../dp_logger/dp_logger.h"
 #ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
-#include <linux/displayport_bigdata.h>
+#include "../dp_logger/displayport_bigdata.h"
 #endif
 
 #if defined(CONFIG_SOC_EXYNOS9810)
@@ -38,6 +39,8 @@
 #include "./cal_9820/regs-displayport.h"
 #elif defined(CONFIG_SOC_EXYNOS9830)
 #include "./cal_9830/regs-displayport.h"
+#elif defined(CONFIG_SOC_EXYNOS2100)
+#include "./cal_2100/regs-displayport.h"
 #endif
 
 #include "./panels/exynos_panel.h"
@@ -45,14 +48,18 @@
 #include "displayport_aux_client.h"
 #include "displayport_topology.h"
 
-#include "secdp_unit_test.h"
+#if defined(CONFIG_UML)
+#include "./cal_2100/regs-displayport.h"
+#endif
+#include <kunit/test.h>
+#include <kunit/mock.h>
+
 
 #define FEATURE_SUPPORT_DISPLAYID
 /*#define FEATURE_USE_PREFERRED_DISPLAYID*/
 #define DISPLAYID_EXT 0x70
 #define FEATURE_USE_PREFERRED_TIMING_1ST
 #define FEATURE_MANAGE_HMD_LIST
-/*#define FEATURE_IGNORE_PREFER_IF_DEX_RES_EXIST*/
 #define FEATURE_DEX_ADAPTER_TWEAK
 
 #define MST_MAX_VIDEO_FOR_DEX V2560X1600P60
@@ -62,6 +69,7 @@
 
 extern int displayport_log_level;
 extern int forced_resolution;
+extern int phy_status;
 
 #define DISPLAYPORT_MODULE_NAME "exynos-displayport"
 
@@ -91,7 +99,10 @@ extern int forced_resolution;
 
 #define displayport_dbg(fmt, ...)						\
 	do {									\
-			pr_info("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);			\
+		if (displayport_log_level >= 7)	{				\
+			pr_info("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);	\
+			dp_logger_print(fmt, ##__VA_ARGS__);                    \
+		}								\
 	} while (0)
 
 extern struct displayport_device *displayport_drvdata;
@@ -173,9 +184,9 @@ enum displayport_get_sst_id_type {
 #define MAX_SST_CNT MAX_VC_CNT
 #define SST1 0
 #define SST2 1
-#define DEFAULT_DECON_ID 1
+#define DEFAULT_DECON_ID 2
 #define SST1_DECON_ID DEFAULT_DECON_ID
-#define SST2_DECON_ID 2
+#define SST2_DECON_ID 3
 #define MAX_VC_PAYLOAD_TIMESLOT 63
 
 #define MAX_LANE_CNT 4
@@ -445,7 +456,7 @@ struct fb_vendor {
 #define VERSION (0xFF << 16)
 #define HDCP_CAPABLE (1 << 1)
 
-#define SMC_CHECK_STREAM_TYPE_ID		((unsigned int)0x82004022)
+#define SMC_CHECK_STREAM_TYPE_ID	0x82004022
 #define DPCD_HDCP22_RX_INFO 0x69330
 
 #define DPCD_HDCP22_RX_CAPS_LENGTH 3
@@ -636,10 +647,10 @@ static const unsigned int extcon_id[] = {
 
 #define MAX_EDID_BLOCK 4
 #define EDID_BLOCK_SIZE 128
-#if defined(CONFIG_USE_DISPLAYPORT_CCIC_EVENT_QUEUE)
-struct ccic_event {
+#if IS_ENABLED(CONFIG_USE_DISPLAYPORT_PDIC_EVENT_QUEUE)
+struct pdic_event {
 	struct list_head list;
-	CC_NOTI_TYPEDEF event;
+	PD_NOTI_TYPEDEF event;
 };
 #endif
 
@@ -697,7 +708,7 @@ enum dex_state {
 	DEX_ON,
 	DEX_RECONNECTING,
 };
-enum wait_state {
+enum dp_wait_state {
 	DP_READY_NO,
 	DP_READY_YES,
 };
@@ -722,8 +733,8 @@ enum dex_hmd_type {
 };
 
 struct secdp_sink_dev {
-	u32 ven_id;		/* vendor id from CCIC */
-	u32 prod_id;		/* product id from CCIC */
+	u32 ven_id;		/* vendor id from PDIC */
+	u32 prod_id;		/* product id from PDIC */
 	char monitor_name[MON_NAME_LEN];	/* max 14 bytes, from EDID */
 };
 #endif
@@ -759,18 +770,20 @@ struct displayport_device {
 	struct mutex hdcp2_lock;
 	spinlock_t spinlock_sfr;
 
-#if defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
+	int notifier_registered;
+	bool pdic_link_conf;
+	bool pdic_hpd;
+	uint64_t pdic_cable_state;
+
+#if IS_ENABLED(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
 	struct delayed_work notifier_register_work;
 	struct notifier_block dp_typec_nb;
-	ccic_notifier_dp_pinconf_t ccic_notify_dp_conf;
-	int notifier_registered;
-	bool ccic_link_conf;
-	bool ccic_hpd;
-	uint64_t ccic_cable_state;
-#if defined(CONFIG_USE_DISPLAYPORT_CCIC_EVENT_QUEUE)
-	struct list_head list_cc;
-	struct delayed_work ccic_event_proceed_work;
-	struct mutex ccic_lock;
+	pdic_notifier_dp_pinconf_t pdic_notify_dp_conf;
+
+#if IS_ENABLED(CONFIG_USE_DISPLAYPORT_PDIC_EVENT_QUEUE)
+	struct list_head list_pd;
+	struct delayed_work pdic_event_proceed_work;
+	struct mutex pdic_lock;
 #endif
 #endif
 	int hpd_current_state;
@@ -793,30 +806,28 @@ struct displayport_device {
 	struct displayport_sst *sst[MAX_SST_CNT];
 
 	int mst_cap;
+	struct dentry *debug_root;
+	struct dentry *debug_dump;
 
 	u32 dex_setting;
 	int mst_mode;
 	enum dex_state dex_state;
 	u8 dex_ver[2];
 	enum dex_support_type dex_adapter_type;
+	enum dex_support_type dex_max_resolution;
 	videoformat dex_video_pick;
-#ifdef FEATURE_DEX_ADAPTER_TWEAK
-	bool dex_skip_adapter_check;
-#endif
 
 #ifdef FEATURE_MANAGE_HMD_LIST
 	struct secdp_sink_dev hmd_list[MAX_NUM_HMD];  /*list of supported HMD device*/
 	struct mutex hmd_lock;
-#endif
 	bool is_hmd_dev;
+#endif
 
 	uint64_t ven_id;
 	uint64_t prod_id;
 	char mon_name[MON_NAME_LEN];
-
 	u8 *edid_test_buf;
-	int do_unit_test;
-	enum wait_state dp_ready_wait_state;
+	enum dp_wait_state dp_ready_wait_state;
 	wait_queue_head_t dp_ready_wait;
 #ifdef CONFIG_SEC_DISPLAYPORT_SELFTEST
 	void (*hpd_changed)(int);
@@ -1238,7 +1249,7 @@ extern struct hdcp13_info hdcp13_info;
 #define BINFO_SIZE 2
 #define V_READ_RETRY_CNT 3
 
-#define USBDP_PHY_CONTROL 0x15860704
+#define USBDP_PHY_CONTROL 0x15860730
 
 enum{
 	LINK_CHECK_PASS = 0,
@@ -1261,12 +1272,19 @@ static inline int displayport_phy_enabled(void)
 	/* USBDP_PHY_CONTROL register */
 	struct displayport_device *displayport = get_displayport_drvdata();
 	int en = 0;
+	static u32 log_cnt;
 
 	if (displayport->res.usbdp_regs) {
 		en = readl(displayport->res.usbdp_regs) & 0x1;
 
-		if (!en)
-			displayport_info("combo phy disabled\n");
+		if (!en) {
+			if (log_cnt++ < 3)
+				displayport_info("combo phy disabled\n");
+		} else {
+			if (log_cnt > 0)
+				displayport_info("combo phy enabled after %u\n", log_cnt);
+			log_cnt = 0;
+		}
 	}
 
 	return en;
@@ -1489,6 +1507,9 @@ u8 edid_read_checksum(void);
 u32 edid_audio_informs(void);
 bool edid_support_pro_audio(void);
 bool displayport_check_dex_ratio(enum video_ratio_t ratio);
+int edid_checksum(u8 *data, int block);
+
+
 
 void displayport_reg_set_avi_infoframe(u32 sst_id, struct infoframe avi_infofrmae);
 void displayport_reg_set_spd_infoframe(u32 sst_id, struct infoframe spd_infofrmae);
@@ -1501,6 +1522,7 @@ u8 hdcp13_read_bcap(void);
 void hdcp13_link_integrity_check(void);
 
 extern int hdcp_calc_sha1(u8 *digest, const u8 *buf, unsigned int buflen);
+extern int exynos_usbdrd_inform_dp_use(int use, int lane_cnt);
 
 #define DISPLAYPORT_IOC_DUMP			_IOW('V', 0, u32)
 #define DISPLAYPORT_IOC_GET_ENUM_DV_TIMINGS	_IOW('V', 1, u8)

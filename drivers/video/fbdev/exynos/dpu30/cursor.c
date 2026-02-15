@@ -243,6 +243,9 @@ int decon_set_cursor_win_config(struct decon_device *decon, int x, int y)
 
 	decon_set_cursor_pos(decon, x, y);
 
+	if (decon->dt.psr_mode == DECON_MIPI_COMMAND_MODE)
+		return 0;
+
 	mutex_lock(&decon->cursor.unmask_lock);
 
 	decon_to_psr_info(decon, &psr);

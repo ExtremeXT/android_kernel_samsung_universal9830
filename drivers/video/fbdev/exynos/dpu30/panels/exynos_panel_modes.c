@@ -14,7 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
-#include <linux/panel_modes.h>
+#include "../panel_modes.h"
 #include <linux/sort.h>
 #include "exynos_panel_drv.h"
 #include "exynos_panel.h"
@@ -63,12 +63,12 @@ static int compare_exynos_display_mode(const void *a, const void *b)
 
 void exynos_mode_debug_printmodeline(const struct exynos_display_mode *mode)
 {
-	pr_info("Modeline " EXYNOS_MODE_FMT "\n", EXYNOS_MODE_ARG(mode));
+	DPU_INFO_PANEL("Modeline " EXYNOS_MODE_FMT "\n", EXYNOS_MODE_ARG(mode));
 }
 
 void exynos_mode_info_debug_printmodeline(const struct exynos_display_mode_info *mode_info)
 {
-	pr_info("Modeline " EXYNOS_MODE_INFO_FMT "\n",
+	DPU_INFO_PANEL("Modeline " EXYNOS_MODE_INFO_FMT "\n",
 			EXYNOS_MODE_INFO_ARG(mode_info));
 }
 
@@ -126,7 +126,7 @@ exynos_display_modes_create_from_panel_display_modes(struct exynos_panel_device 
 
 	exynos_modes = kzalloc(sizeof(*exynos_modes), GFP_KERNEL);
 	if (!exynos_modes) {
-		panel_err("could not allocate struct exynos_display_modes\n");
+		DPU_ERR_PANEL("%s: could not allocate struct exynos_display_modes\n", __func__);
 		return NULL;
 	}
 
@@ -134,7 +134,7 @@ exynos_display_modes_create_from_panel_display_modes(struct exynos_panel_device 
 				sizeof(struct exynos_display_mode *),
 				GFP_KERNEL);
 	if (!exynos_modes->modes) {
-		panel_err("could not allocate exynos_display_mode array\n");
+		DPU_ERR_PANEL("%s: could not allocate exynos_display_mode array\n", __func__);
 		goto modefail;
 	}
 
@@ -142,7 +142,7 @@ exynos_display_modes_create_from_panel_display_modes(struct exynos_panel_device 
 				sizeof(struct exynos_display_mode_info *),
 				GFP_KERNEL);
 	if (!exynos_modes->mode_infos) {
-		panel_err("could not allocate exynos_display_mode_info array\n");
+		DPU_ERR_PANEL("%s: could not allocate exynos_display_mode_info array\n", __func__);
 		goto modefail;
 	}
 
@@ -151,7 +151,7 @@ exynos_display_modes_create_from_panel_display_modes(struct exynos_panel_device 
 
 		edmi = kzalloc(sizeof(*edmi), GFP_KERNEL);
 		if (!edmi) {
-			panel_err("could not allocate exynos_display_mode_info struct\n");
+			DPU_ERR_PANEL("%s: could not allocate exynos_display_mode_info struct\n", __func__);
 			goto modefail;
 		}
 
@@ -177,7 +177,7 @@ exynos_display_modes_create_from_panel_display_modes(struct exynos_panel_device 
 	}
 
 	if (!native_mode)
-		panel_warn("native_mode not found\n");
+		DPU_ERR_PANEL("%s: native_mode not found\n", __func__);
 
 	/*
 	 * sorting exynos_display_mode list
@@ -221,13 +221,12 @@ void exynos_display_modes_update_panel_info(struct exynos_panel_device *panel,
 	for (i = 0; i < exynos_modes->num_modes; i++) {
 		/* copy to display_mode array for compatibility */
 		edmi = container_of(exynos_modes->modes[i],
-				struct exynos_display_mode_info, mode),
-				  sizeof(struct exynos_display_mode_info);
+				struct exynos_display_mode_info, mode);
 		memcpy(&info->display_mode[i], edmi, sizeof(*edmi));
 		info->display_mode[i].mode.index = i;
 		exynos_mode_info_debug_printmodeline(&info->display_mode[i]);
 	}
 	info->cur_mode_idx = exynos_modes->native_mode;
-	panel_info("default display mode index(%d)\n", info->cur_mode_idx);
+	DPU_INFO_PANEL("%s: default display mode index(%d)\n", __func__, info->cur_mode_idx);
 	info->display_mode_count = exynos_modes->num_modes;
 }

@@ -494,67 +494,6 @@ static void dsim_reg_set_bias_con(u32 id, u32 *blk_ctl)
 		dsim_phy_extra_write(id, DSIM_PHY_BIAS_CON(i), blk_ctl[i]);
 }
 
-#ifdef CONFIG_SUPPORT_MCD_MOTTO_TUNE
-int dsim_reg_set_phy_swing_level(u32 id)
-{
-	unsigned int value;
-	struct dsim_device *dsim = get_dsim_drvdata(id);
-
-	if (dsim->motto_info.tune_swing & DSIM_TUNE_SWING_EN) {
-		value = GET_DSIM_SWING_LEVEL(dsim->motto_info.tune_swing);
-		dsim_phy_extra_write_mask(id, DSIM_PHY_BIAS_CON2,
-			DSIM_PHY_BIAS0_REG400M(value), DSIM_PHY_BIAS0_REG400M_MASK);
-	}
-
-	return 0;
-}
-
-int dsim_reg_set_phy_impedance_level(u32 id)
-{
-	int i;
-	struct dsim_device *dsim = get_dsim_drvdata(id);
-
-	if (dsim->motto_info.tune_impedance & DSIM_TUNE_IMPEDANCE_EN) {
-
-		dsim_phy_write_mask(id, DSIM_PHY_MC_ANA_CON0,
-			DSIM_PHY_RES_UP(dsim->motto_info.tune_impedance), DSIM_PHY_RES_UP_MASK);
-
-		dsim_phy_write_mask(id, DSIM_PHY_MC_ANA_CON0,
-			DSIM_PHY_RES_DN(dsim->motto_info.tune_impedance), DSIM_PHY_RES_DN_MASK);
-
-		for (i = 0; i < MAX_DSIM_DATALANE_CNT; i++) {
-			dsim_phy_write_mask(id, DSIM_PHY_MD_ANA_CON0(i),
-				DSIM_PHY_RES_UP(dsim->motto_info.tune_impedance), DSIM_PHY_RES_UP_MASK);
-
-			dsim_phy_write_mask(id, DSIM_PHY_MD_ANA_CON0(i),
-				DSIM_PHY_RES_DN(dsim->motto_info.tune_impedance), DSIM_PHY_RES_DN_MASK);
-		}		
-	}
-
-	return 0;
-}
-
-int dsim_reg_set_phy_emphasis_value(u32 id)
-{
-	int i;
-	unsigned int value;
-	struct dsim_device *dsim = get_dsim_drvdata(id);
-	
-	if (dsim->motto_info.tune_emphasis & DSIM_TUNE_EMPHASIS_EN) {
-		value = GET_DSIM_EMPHASIS_LEVEL(dsim->motto_info.tune_emphasis);
-
-		dsim_phy_write_mask(id, DSIM_PHY_MC_ANA_CON1,
-			DSIM_PHY_EMPHASIS(dsim->motto_info.tune_emphasis), DSIM_PHY_EMPHASIS_MASK);
-
-		for (i = 0; i < MAX_DSIM_DATALANE_CNT; i++) {
-			dsim_phy_write_mask(id, DSIM_PHY_MD_ANA_CON1(i),
-				DSIM_PHY_EMPHASIS(dsim->motto_info.tune_emphasis), DSIM_PHY_EMPHASIS_MASK);
-		}
-		
-	}
-	return 0;
-}
-#endif
 /* PLL Control Register */
 static void dsim_reg_set_pll_con(u32 id, u32 *blk_ctl)
 {
@@ -1320,12 +1259,6 @@ void dsim_reg_enable_packetgo(u32 id, u32 en)
 				DSIM_CMD_CONFIG_PKT_GO_EN);
 }
 
-void dsim_reg_set_packetgo_ready(u32 id)
-{
-	dsim_write_mask(id, DSIM_CMD_CONFIG, DSIM_CMD_CONFIG_PKT_GO_RDY,
-				DSIM_CMD_CONFIG_PKT_GO_RDY);
-}
-
 static void dsim_reg_enable_multi_cmd_packet(u32 id, u32 en)
 {
 	u32 val = en ? ~0 : 0;
@@ -1900,11 +1833,6 @@ static int dsim_reg_set_clocks(u32 id, struct dsim_clks *clks,
 		/* set data lane Analog Block Control Register control */
 		dsim_reg_set_md_ana_con(id, DSIM_PHY_MD_ANA_CON_VAL);
 
-#ifdef CONFIG_SUPPORT_MCD_MOTTO_TUNE
-		dsim_reg_set_phy_swing_level(id);
-		dsim_reg_set_phy_impedance_level(id);
-		dsim_reg_set_phy_emphasis_value(id);
-#endif
 		/* set PMSK on PHY */
 		dsim_reg_set_pll_freq(id, pll.p, pll.m, pll.s, pll.k);
 
@@ -2234,10 +2162,9 @@ void dsim_reg_preinit(u32 id)
 	dsim_reset_panel(dsim);
 }
 
-int dsim_reg_init(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *clks,
+void dsim_reg_init(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *clks,
 		bool panel_ctrl)
 {
-	int ret = 0;
 	u32 lanes;
 #if !defined(CONFIG_EXYNOS_LCD_ON_UBOOT)
 	struct dsim_device *dsim = get_dsim_drvdata(id);
@@ -2248,7 +2175,7 @@ int dsim_reg_init(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *
 			dsim_info("dsim%d is already enabled in bootloader\n", dsim->id);
 			/* to prevent irq storm that may occur in the OFF STATE */
 			dsim_reg_clear_int(id, 0xffffffff);
-			return 0;
+			return;
 		}
 	}
 
@@ -2276,7 +2203,7 @@ int dsim_reg_init(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *
 #else
 	/* Panel power on */
 	if (panel_ctrl)
-		ret = dsim_set_panel_power(dsim, 1);
+		dsim_set_panel_power(dsim, 1);
 #endif
 
 	dsim_reg_set_clocks(id, clks, &lcd_info->dphy_pms, 1);
@@ -2295,11 +2222,9 @@ int dsim_reg_init(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *
 #if defined(CONFIG_EXYNOS_LCD_ON_UBOOT)
 	/* TODO: This code will be implemented as uboot style */
 #else
-	if (!ret && panel_ctrl)
-		ret = dsim_reset_panel(dsim);
+	if (panel_ctrl)
+		dsim_reset_panel(dsim);
 #endif
-
-	return ret;
 }
 
 /* Set clocks and lanes and HS ready */
@@ -2479,13 +2404,11 @@ u32 dsim_reg_payload_fifo_is_empty(u32 id)
 	return dsim_read_mask(id, DSIM_FIFOCTRL, DSIM_FIFOCTRL_EMPTY_PL_SFR);
 }
 
-bool dsim_reg_is_writable_ph_fifo_state(u32 id, u32 cmd_cnt)
+bool dsim_reg_is_writable_ph_fifo_state(u32 id)
 {
 	u32 val = dsim_read(id, DSIM_FIFOCTRL);
 
 	val = DSIM_FIFOCTRL_NUMBER_OF_PH_SFR_GET(val);
-	val += cmd_cnt;
-
 	if (val < DSIM_PH_FIFOCTRL_THRESHOLD)
 		return true;
 	else

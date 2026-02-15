@@ -22,8 +22,10 @@
 #include "../dsim.h"
 #include "../decon.h"
 
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 #include "../disp_err.h"
-#include "../../panel/panel_drv.h"
+#include "panel_drv.h"
+#endif
 
 extern int dpu_panel_log_level;
 
@@ -56,13 +58,16 @@ extern int dpu_panel_log_level;
 #define DEFAULT_BRIGHTNESS	127
 
 extern struct exynos_panel_device *panel_drvdata[MAX_PANEL_DRV_SUPPORT];
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 extern struct exynos_panel_ops common_panel_ops;
 #else
+extern struct exynos_panel_ops panel_emul_ops;
 extern struct exynos_panel_ops panel_s6e3hab_ops;
 extern struct exynos_panel_ops panel_s6e3ha9_ops;
 extern struct exynos_panel_ops panel_s6e3ha8_ops;
 extern struct exynos_panel_ops panel_s6e3fa0_ops;
+extern struct exynos_panel_ops panel_s6e3fab_ops;
+extern struct exynos_panel_ops panel_s6e3had_ops;
 #endif
 
 struct exynos_panel_resources {
@@ -82,8 +87,13 @@ struct exynos_panel_ops {
 	int (*read_state)(struct exynos_panel_device *panel);
 	int (*set_cabc_mode)(struct exynos_panel_device *panel, int mode);
 	int (*set_light)(struct exynos_panel_device *panel, u32 br_val);
+#if !IS_ENABLED(CONFIG_MCD_PANEL)
+	int (*set_vrefresh)(struct exynos_panel_device *panel, u32 refresh);
+#else
 	int (*set_vrefresh)(struct exynos_panel_device *panel, struct vrr_config_data *vrr_info);
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#endif
+
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	int (*probe)(struct exynos_panel_device *panel);
 	int (*resume)(struct exynos_panel_device *panel);
 	int (*init)(struct exynos_panel_device *panel);
@@ -96,6 +106,7 @@ struct exynos_panel_ops {
 	int (*sleepout)(struct exynos_panel_device *panel);
 	int (*notify)(struct exynos_panel_device *panel, void *data);
 	int (*set_error_cb)(struct exynos_panel_device *panel, void *data);
+	int (*reset_panel)(struct exynos_panel_device *panel);
 #if defined(CONFIG_PANEL_DISPLAY_MODE)
 	int (*get_display_mode)(struct exynos_panel_device *panel, void *data);
 	int (*set_display_mode)(struct exynos_panel_device *panel, void *data);
@@ -134,7 +145,7 @@ struct exynos_panel_device {
 	bool found;	/* found connected panel or not */
 	struct device *dev;
 	struct v4l2_subdev sd;
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	struct v4l2_subdev *panel_drv_sd;
 	struct disp_error_cb_info error_cb_info;
 	struct disp_check_cb_info check_cb_info;
@@ -170,9 +181,13 @@ int exynos_panel_calc_slice_width(u32 dsc_cnt, u32 slice_num, u32 xres);
 #define EXYNOS_PANEL_IOC_DUMP		_IOW('P', 9, u32)
 #define EXYNOS_PANEL_IOC_READ_STATE	_IOR('P', 10, u32)
 #define EXYNOS_PANEL_IOC_SET_LIGHT	_IOW('P', 11, u32)
+#if !IS_ENABLED(CONFIG_MCD_PANEL)
+#define EXYNOS_PANEL_IOC_SET_VREFRESH	_IOW('P', 12, u32)
+#else
 #define EXYNOS_PANEL_IOC_SET_VREFRESH	_IOW('P', 12, struct vrr_config_data *)
+#endif
 
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 #define EXYNOS_PANEL_IOC_INIT	_IOW('P', 21, u32)
 #define EXYNOS_PANEL_IOC_CONNECTED	_IOR('P', 22, u32)
 #define EXYNOS_PANEL_IOC_IS_POWERON	_IOR('P', 23, u32)

@@ -19,31 +19,42 @@
 #include <linux/videodev2.h>
 #include <linux/io.h>
 #include <linux/pm_runtime.h>
-#include <linux/pm_qos.h>
+#include <soc/samsung/exynos_pm_qos.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/ion_exynos.h>
-#if defined(CONFIG_EXYNOS_BTS)
+#include <linux/ion.h>
+#include <linux/dma-buf.h>
+#if IS_ENABLED(CONFIG_EXYNOS_BTS) || IS_ENABLED(CONFIG_EXYNOS_BTS_MODULE)
 #include <soc/samsung/bts.h>
 #endif
 
 #include "decon.h"
 /* TODO: SoC dependency will be removed */
-#include "./cal_9830/regs-dpp.h"
-#include "./cal_9830/dpp_cal.h"
-#ifdef CONFIG_EXYNOS_MCD_HDR
-#include "./mcd_hdr/hdr_drv.h"
+#include "./cal_2100/regs-dpp.h"
+#include "./cal_2100/dpp_cal.h"
+
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+#include "mcd.h"
 #endif
 
 extern int dpp_log_level;
 
 #define DPP_MODULE_NAME		"exynos-dpp"
-#define MAX_DPP_CNT		7 /* + ODMA case */
+#define MAX_DPP_CNT		MAX_DPP_SUBDEV
 #define MAX_FMT_CNT		64
 #define DEFAULT_FMT_CNT		8
 
 /* about 1msec @ ACLK=630MHz */
 #define INIT_RCV_NUM		630000
+
+#if defined(CONFIG_EXYNOS_SUPPORT_HWFC)
+#define HWFC_LINE_NUM	32
+#endif
+
+#if defined(CONFIG_EXYNOS_SUPPORT_VOTF_IN)
+#define DPUF0_FIRST_DPP_ID	0
+#define DPUF1_FIRST_DPP_ID	8
+#endif
 
 #define P010_Y_SIZE(w, h)		((w) * (h) * 2)
 #define P010_CBCR_SIZE(w, h)		((w) * (h))
@@ -123,13 +134,6 @@ enum dpp_reg_area {
 	REG_AREA_ODMA,
 };
 
-#ifdef CONFIG_EXYNOS_MCD_HDR
-enum hdr_path {
-	HDR_PATH_LSI = 0,
-	HDR_PATH_MCD,
-};
-#endif
-
 enum dpp_attr {
 	DPP_ATTR_AFBC		= 0,
 	DPP_ATTR_BLOCK		= 1,
@@ -154,6 +158,10 @@ struct dpp_resources {
 	void __iomem *regs;
 	void __iomem *dma_regs;
 	void __iomem *dma_com_regs;
+#if defined(CONFIG_EXYNOS_SUPPORT_VOTF_IN)
+	void __iomem *votf_regs;
+	u32 votf_base_addr;
+#endif
 	int irq;
 	int dma_irq;
 };
@@ -166,10 +174,16 @@ struct dpp_debug {
 struct dpp_config {
 	struct decon_win_config config;
 	unsigned long rcv_num;
-#ifdef CONFIG_EXYNOS_MCD_HDR
-	u32 wcg_mode;
-	//struct exynos_video_meta meta;
-	struct dpp_hdr10_info hdr_info;
+#if defined(CONFIG_EXYNOS_SUPPORT_HWFC)
+	bool hwfc_enable;
+	u32 hwfc_idx;
+#endif
+#if IS_ENABLED(CONFIG_EXYNOS_SBWC_LIBREQ)
+	bool lib_requested;
+#endif
+
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+	struct mcd_dpp_config mcd_config;
 #endif
 };
 
@@ -177,6 +191,12 @@ struct dpp_size_range {
 	u32 min;
 	u32 max;
 	u32 align;
+};
+
+
+enum dpp_restriction_rsvd {
+	SRC_W_ROT_MAX = 0,
+	LIB_RESERVED = 1,
 };
 
 struct dpp_restriction {
@@ -230,22 +250,23 @@ struct dpp_device {
 	int port;
 	unsigned long attr;
 	enum dpp_state state;
+#if defined(SYSFS_UNITTEST_INTERFACE)
+	u64 dpp_irq_err_state;
+	u64 dma_irq_err_state;
+#endif
 	enum wbmux_state wb_state;	/* only for writeback */
 	struct device *dev;
 	struct v4l2_subdev sd;
 	struct dpp_resources res;
 	struct dpp_debug d;
-	struct timer_list op_timer;
 	wait_queue_head_t framedone_wq;
 	struct dpp_config *dpp_config;
 	spinlock_t slock;
 	spinlock_t dma_slock;
 	struct mutex lock;
 	struct dpp_restriction restriction;
-#ifdef CONFIG_EXYNOS_MCD_HDR
-	struct v4l2_subdev *mcd_sd;
-	u32 wcg_src_cm;
-	u32 wcg_dst_cm;
+#if IS_ENABLED(CONFIG_MCD_PANEL)
+	struct mcd_dpp_device mcd_dpp;
 #endif
 };
 
@@ -273,6 +294,13 @@ static inline void dpp_write(u32 id, u32 reg_id, u32 val)
 {
 	struct dpp_device *dpp = get_dpp_drvdata(id);
 	writel(val, dpp->res.regs + reg_id);
+}
+
+static inline void dpp_write_relaxed(u32 id, u32 reg_id, u32 val)
+{
+	struct dpp_device *dpp = get_dpp_drvdata(id);
+
+	writel_relaxed(val, dpp->res.regs + reg_id);
 }
 
 static inline void dpp_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
@@ -343,6 +371,37 @@ static inline void dma_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
 	writel(val, dpp->res.dma_regs + reg_id);
 }
 
+#if defined(CONFIG_EXYNOS_SUPPORT_VOTF_IN)
+/* DPU C2SERV Global(vOTF) */
+static inline u32 votf_read(u32 id, u32 reg_id)
+{
+	struct dpp_device *dpp = get_dpp_drvdata(id);
+	return readl(dpp->res.votf_regs + reg_id);
+}
+
+static inline u32 votf_read_mask(u32 id, u32 reg_id, u32 mask)
+{
+	u32 val = votf_read(id, reg_id);
+	val &= (~mask);
+	return val;
+}
+
+static inline void votf_write(u32 id, u32 reg_id, u32 val)
+{
+	struct dpp_device *dpp = get_dpp_drvdata(id);
+	writel(val, dpp->res.votf_regs + reg_id);
+}
+
+static inline void votf_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
+{
+	struct dpp_device *dpp = get_dpp_drvdata(id);
+	u32 old = votf_read(id, reg_id);
+
+	val = (val & mask) | (old & ~mask);
+	writel(val, dpp->res.votf_regs + reg_id);
+}
+#endif
+
 static inline void dpp_select_format(struct dpp_device *dpp,
 			struct dpp_img_format *vi, struct dpp_params_info *p)
 {
@@ -355,8 +414,6 @@ static inline void dpp_select_format(struct dpp_device *dpp,
 }
 
 void dpp_dump(struct dpp_device *dpp);
-void dpp_dma_irq_clear(u32 id, const unsigned long attr);
-void dpp_op_irq_clear(u32 id, const unsigned long attr);
 
 #define DPP_WIN_CONFIG			_IOW('P', 0, struct dpp_config)
 #define DPP_STOP			_IOW('P', 1, unsigned long)

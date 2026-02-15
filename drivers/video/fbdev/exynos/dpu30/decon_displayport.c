@@ -10,11 +10,12 @@
 */
 
 #include <linux/clk-provider.h>
-#include <linux/videodev2_exynos_media.h>
 #include <media/v4l2-subdev.h>
-#if defined(CONFIG_CAL_IF)
+#if !defined(CONFIG_UML)
 #include <soc/samsung/cal-if.h>
 #endif
+
+#include "videodev2_exynos_media.h"
 #include "decon.h"
 #include "displayport.h"
 

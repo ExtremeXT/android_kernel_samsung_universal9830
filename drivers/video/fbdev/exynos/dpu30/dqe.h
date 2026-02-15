@@ -12,8 +12,8 @@
 #define __SAMSUNG_DQE_H__
 
 #include "decon.h"
-#if defined(CONFIG_SOC_EXYNOS9830)
-#include "./cal_9830/regs-dqe.h"
+#if defined(CONFIG_SOC_EXYNOS2100)
+#include "./cal_2100/regs-dqe.h"
 #endif
 
 #define dqe_err(fmt, ...)							\
@@ -46,7 +46,7 @@ static inline u32 dqe_read(u32 reg_id)
 {
 	struct decon_device *decon = get_decon_drvdata(0);
 
-	return readl(decon->res.regs + DQE_BASE + reg_id);
+	return readl(decon->res.dqe_regs + reg_id);
 }
 
 static inline u32 dqe_read_mask(u32 reg_id, u32 mask)
@@ -61,7 +61,7 @@ static inline void dqe_write(u32 reg_id, u32 val)
 {
 	struct decon_device *decon = get_decon_drvdata(0);
 
-	writel(val, decon->res.regs + DQE_BASE + reg_id);
+	writel(val, decon->res.dqe_regs + reg_id);
 }
 
 static inline void dqe_write_mask(u32 reg_id, u32 val, u32 mask)
@@ -70,13 +70,14 @@ static inline void dqe_write_mask(u32 reg_id, u32 val, u32 mask)
 	u32 old = dqe_read(reg_id);
 
 	val = (val & mask) | (old & ~mask);
-	writel(val, decon->res.regs + DQE_BASE + reg_id);
+	writel(val, decon->res.dqe_regs + reg_id);
 }
 
 static inline bool IS_DQE_OFF_STATE(struct decon_device *decon)
 {
 	return decon == NULL ||
 		decon->state == DECON_STATE_OFF ||
+		decon->state == DECON_STATE_DOZE_SUSPEND ||
 		decon->state == DECON_STATE_INIT;
 }
 
@@ -86,19 +87,22 @@ struct dqe_reg_dump {
 };
 
 struct dqe_ctx {
-	struct dqe_reg_dump cgc[DQECGCLUT_MAX];
-	struct dqe_reg_dump gamma[DQEGAMMALUT_MAX];
-	struct dqe_reg_dump hsc[DQEHSCLUT_MAX];
-	struct dqe_reg_dump aps[DQEAPSLUT_MAX];
+	struct dqe_reg_dump gamma_matrix[DQE_GAMMA_MATRIX_REG_MAX];
+	struct dqe_reg_dump degamma_lut[DQE_DEGAMMA_REG_MAX];
+	struct dqe_reg_dump cgc_con[DQE_CGC_CON_REG_MAX];
+	struct dqe_reg_dump cgc_lut[3][DQE_CGC_REG_MAX];
+	struct dqe_reg_dump regamma_lut[DQE_REGAMMA_REG_MAX];
+	u32 gamma_matrix_on;
+	u32 degamma_on;
 	u32 cgc_on;
-	u32 gamma_on;
-	u32 hsc_on;
-	u32 aps_on;
-	u32 aps_lux;
+	u32 regamma_on;
 	bool need_udpate;
-	u32 color_mode;
-	u32 night_light_on;
-	u32 boosted_on;
+	bool cgc_update[2];
+};
+
+enum dqe_state {
+	DQE_STATE_DISABLE = 0,
+	DQE_STATE_ENABLE,
 };
 
 struct dqe_device {
@@ -107,7 +111,14 @@ struct dqe_device {
 	struct mutex lock;
 	struct mutex restore_lock;
 	struct dqe_ctx ctx;
+	enum dqe_state state;
 };
+
+static inline bool IS_DQE_DISABLE(struct dqe_device *dqe)
+{
+	return dqe == NULL ||
+		dqe->state == DQE_STATE_DISABLE;
+}
 
 extern int dqe_log_level;
 
@@ -115,31 +126,38 @@ extern int dqe_log_level;
 void dqe_reg_start(u32 id, struct exynos_panel_info *lcd_info);
 void dqe_reg_stop(u32 id);
 
-void dqe_reg_set_dqecon_all_reset(void);
+void __dqe_dump(u32 id, void __iomem *dqe_regs);
+
+void dqe_reg_set_gamma_matrix_on(u32 on);
+u32 dqe_reg_get_gamma_matrix_on(void);
+
+void dqe_reg_set_degamma_on(u32 on);
+u32 dqe_reg_get_degamma_on(void);
+
 void dqe_reg_set_cgc_on(u32 on);
 u32 dqe_reg_get_cgc_on(void);
-void dqe_reg_set_gamma_on(u32 on);
-u32 dqe_reg_get_gamma_on(void);
-void dqe_reg_set_hsc_on(u32 on);
-u32 dqe_reg_get_hsc_on(void);
-void dqe_reg_hsc_sw_reset(struct decon_device *decon);
-void dqe_reg_set_hsc_full_pxl_num(struct exynos_panel_info *lcd_info);
-u32 dqe_reg_get_hsc_full_pxl_num(void);
-void dqe_reg_set_aps_on(u32 on);
-u32 dqe_reg_get_aps_on(void);
-void dqe_reg_set_aps_full_pxl_num(struct exynos_panel_info *lcd_info);
-u32 dqe_reg_get_aps_full_pxl_num(void);
-void dqe_reg_set_aps_img_size(struct exynos_panel_info *lcd_info);
 
-int dqe_save_context(void);
-int dqe_restore_context(void);
-void decon_dqe_sw_reset(struct decon_device *decon);
+void dqe_reg_set_regamma_on(u32 on);
+u32 dqe_reg_get_regamma_on(void);
+
+void dqe_reg_set_cgc_dither_on(u32 on);
+u32 dqe_reg_get_cgc_dither_on(void);
+
+void decon_dqe_restore_context(struct decon_device *decon);
+void decon_dqe_restore_cgc_context(struct decon_device *decon);
+void decon_dqe_start(struct decon_device *decon, struct exynos_panel_info *lcd_info);
 void decon_dqe_enable(struct decon_device *decon);
 void decon_dqe_disable(struct decon_device *decon);
 int decon_dqe_create_interface(struct decon_device *decon);
 
 int decon_dqe_set_color_mode(struct decon_color_mode_with_render_intent_info *color_mode);
 int decon_dqe_set_color_transform(struct decon_color_transform_info *transform);
+
+/* APIs for TUI */
+int decon_dqe_get_e_path(struct decon_device *decon, enum dqe_state *state,
+					enum decon_enhance_path *e_path);
+int decon_dqe_set_e_path(struct decon_device *decon, enum dqe_state state,
+					enum decon_enhance_path e_path);
 
 /* APS GAMMA */
 #define APS_GAMMA_BIT_LENGTH			(8)

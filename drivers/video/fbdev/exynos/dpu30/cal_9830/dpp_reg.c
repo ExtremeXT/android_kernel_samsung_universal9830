@@ -468,20 +468,6 @@ static void dpp_reg_set_scale_ratio(u32 id, struct dpp_params_info *p)
 			prev_h_ratio, p->h_ratio, prev_v_ratio, p->v_ratio);
 }
 
-
-#ifdef CONFIG_EXYNOS_MCD_HDR
-void dpp_reg_sel_hdr(u32 id, enum hdr_path path)
-{
-	dpp_write_mask(id, DPP_ENABLE, DPP_SET_HDR_SEL(path), DPP_HDR_SEL_MASK);
-}
-
-u32 dpp_read_hdr_path(u32 id)
-{
-	return(dpp_read(id, DPP_ENABLE) & DPP_HDR_SEL_MASK);
-}
-#endif
-
-
 static void dpp_reg_set_img_size(u32 id, u32 w, u32 h)
 {
 	dpp_write(id, DPP_IMG_SIZE, DPP_IMG_HEIGHT(h) | DPP_IMG_WIDTH(w));
@@ -492,8 +478,6 @@ static void dpp_reg_set_scaled_img_size(u32 id, u32 w, u32 h)
 	dpp_write(id, DPP_SCALED_IMG_SIZE,
 			DPP_SCALED_IMG_HEIGHT(h) | DPP_SCALED_IMG_WIDTH(w));
 }
-
-#ifndef CONFIG_EXYNOS_MCD_HDR
 
 static void dpp_reg_set_eotf_lut(u32 id, struct dpp_params_info *p)
 {
@@ -592,8 +576,6 @@ static void dpp_reg_set_tm_lut(u32 id, struct dpp_params_info *p)
 	}
 }
 
-
-
 static void dpp_reg_set_hdr_params(u32 id, struct dpp_params_info *p)
 {
 	u32 val, val2, mask;
@@ -611,7 +593,6 @@ static void dpp_reg_set_hdr_params(u32 id, struct dpp_params_info *p)
 		dpp_reg_set_tm_lut(id, p);
 	}
 }
-#endif
 
 /****************** WB MUX CAL functions ******************/
 static void wb_mux_reg_set_sw_reset(u32 id)
@@ -989,27 +970,6 @@ void dpp_reg_init(u32 id, const unsigned long attr)
 	}
 }
 
-void dpp_dma_irq_clear(u32 id, const unsigned long attr)
-{
-	if (test_bit(DPP_ATTR_IDMA, &attr)) {
-		idma_reg_clear_irq(id, IDMA_ALL_IRQ_CLEAR);
-		idma_reg_set_irq_mask_all(id, 1);
-	}
-
-	if (test_bit(DPP_ATTR_ODMA, &attr)) {
-		odma_reg_clear_irq(id, ODMA_ALL_IRQ_CLEAR);
-		odma_reg_set_irq_mask_all(id, 1);
-	}
-}
-
-void dpp_op_irq_clear(u32 id, const unsigned long attr)
-{
-	if (test_bit(DPP_ATTR_DPP, &attr)) {
-		dpp_reg_clear_irq(id, DPP_ALL_IRQ_CLEAR);
-		dpp_reg_set_irq_mask_all(id, 1);
-	}
-}
-
 int dpp_reg_deinit(u32 id, bool reset, const unsigned long attr)
 {
 	if (test_bit(DPP_ATTR_IDMA, &attr)) {
@@ -1068,17 +1028,9 @@ u32 pattern_data[] = {
 };
 #endif
 
-
-
-
 void dpp_reg_configure_params(u32 id, struct dpp_params_info *p,
 		const unsigned long attr)
 {
-
-#ifdef CONFIG_EXYNOS_MCD_HDR
-	dpp_reg_sel_hdr(id, HDR_PATH_MCD);
-#endif
-
 	if (test_bit(DPP_ATTR_CSC, &attr) && test_bit(DPP_ATTR_DPP, &attr))
 		dpp_reg_set_csc_params(id, p->eq_mode);
 	else if (test_bit(DPP_ATTR_CSC, &attr) && test_bit(DPP_ATTR_ODMA, &attr))
@@ -1103,11 +1055,8 @@ void dpp_reg_configure_params(u32 id, struct dpp_params_info *p,
 	/* configure image format of IDMA, DPP, ODMA and WB MUX */
 	dma_dpp_reg_set_format(id, p, attr);
 
-#ifndef CONFIG_EXYNOS_MCD_HDR
-	//make ignore s.lis's hdr
 	if (test_bit(DPP_ATTR_HDR, &attr))
 		dpp_reg_set_hdr_params(id, p);
-#endif
 
 	if (test_bit(DPP_ATTR_AFBC, &attr))
 		idma_reg_set_afbc(id, p->comp_type, p->rcv_num);
@@ -1317,8 +1266,11 @@ static void dma_reg_dump_debug_regs(int id)
 
 static void dpp_reg_dump_debug_regs(int id)
 {
-	u32 sel_layer_01[3] = {0x0000, 0x0100, 0x0101};
-	u32 sel_layer_2345[37] = {0x0000, 0x0100, 0x0101, 0x0200, 0x0201, 0x0210,
+	u32 sel_gf[3] = {0x0000, 0x0100, 0x0101};
+	u32 sel_vg_vgf[19] = {0x0000, 0x0100, 0x0101, 0x0200, 0x0201, 0x0202,
+		0x0203, 0x0204, 0x0205, 0x0206, 0x0207, 0x0208, 0x0300, 0x0301,
+		0x0302, 0x0303, 0x0304, 0x0400, 0x0401};
+	u32 sel_vgs_vgrfs[37] = {0x0000, 0x0100, 0x0101, 0x0200, 0x0201, 0x0210,
 		0x0211, 0x0220, 0x0221, 0x0230, 0x0231, 0x0240, 0x0241, 0x0250,
 		0x0251, 0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x0305, 0x0306,
 		0x0307, 0x0308, 0x0400, 0x0401, 0x0402, 0x0403, 0x0404, 0x0500,
@@ -1327,10 +1279,13 @@ static void dpp_reg_dump_debug_regs(int id)
 	u32 *sel = NULL;
 
 	if (id == 0 || id == 1) { /* GF0, GF1 */
-		sel =  sel_layer_01;
+		sel =  sel_gf;
 		cnt = 3;
-	} else if (id >= 2 && id <= 5) { /* VG, VGF, VGS, VGRFS */
-		sel = sel_layer_2345;
+	} else if (id == 2 || id == 4) { /* VG, VGF */
+		sel = sel_vg_vgf;
+		cnt = 19;
+	} else if (id == 3 || id == 5) { /* VGS, VGRFS */
+		sel = sel_vgs_vgrfs;
 		cnt = 37;
 	} else {
 		dpp_err("DPP%d is wrong ID\n", id);
@@ -1399,14 +1354,12 @@ static void dma_dump_regs(u32 id, void __iomem *dma_regs)
 static void dpp_dump_regs(u32 id, void __iomem *regs, unsigned long attr)
 {
 	dpp_info("=== DPP%d SFR DUMP ===\n", id);
-	if (regs != NULL) {
-		dpp_print_hex_dump(regs, regs + 0x0000, 0x4C);
-		dpp_print_hex_dump(regs, regs + 0x0A54, 0x4);
-		/* shadow */
-		dpp_print_hex_dump(regs, regs + 0x0B00, 0x4C);
-		/* debug */
-		dpp_print_hex_dump(regs, regs + 0x0D00, 0xC);
-	}
+	dpp_print_hex_dump(regs, regs + 0x0000, 0x4C);
+	dpp_print_hex_dump(regs, regs + 0x0A54, 0x4);
+	/* shadow */
+	dpp_print_hex_dump(regs, regs + 0x0B00, 0x4C);
+	/* debug */
+	dpp_print_hex_dump(regs, regs + 0x0D00, 0xC);
 }
 
 void __dpp_dump(u32 id, void __iomem *regs, void __iomem *dma_regs,
