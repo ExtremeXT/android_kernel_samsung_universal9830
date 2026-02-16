@@ -21,8 +21,8 @@
 #include <video/mipi_display.h>
 
 #include "./panels/exynos_panel.h"
-#include "./cal_2100/regs-dsim.h"
-#include "./cal_2100/dsim_cal.h"
+#include "./cal_9830/regs-dsim.h"
+#include "./cal_9830/dsim_cal.h"
 
 #if IS_ENABLED(CONFIG_MCD_PANEL)
 #include "disp_err.h"
@@ -79,15 +79,6 @@ extern int dsim_log_level;
 	} while (0)
 
 extern struct dsim_device *dsim_drvdata[MAX_DSIM_CNT];
-
-/*
- * for GKI
- * This is for building for kernel module
- */
-enum {
-	MIPI_DSI_DSC_PRA    = 0x07,
-	MIPI_DSI_DSC_PPS    = 0x0a,
-};
 
 /* define video timer interrupt */
 enum {

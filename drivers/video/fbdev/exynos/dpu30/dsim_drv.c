@@ -32,7 +32,7 @@
 #if !defined(CONFIG_UML)
 #include <soc/samsung/cal-if.h>
 #endif
-#include <dt-bindings/soc/samsung/exynos2100-devfreq.h>
+#include <dt-bindings/soc/samsung/exynos9830-devfreq.h>
 #include <soc/samsung/exynos-devfreq.h>
 
 #if defined(CONFIG_CPU_IDLE)
@@ -2695,7 +2695,14 @@ static int dsim_probe(struct platform_device *pdev)
 
 	dsim_acquire_fb_resource(dsim);
 
-	iommu_register_device_fault_handler(dev, dpu_sysmmu_fault_handler_dsim, NULL);
+#if defined(CONFIG_EXYNOS_IOVMM)
+	ret = iovmm_activate(dev);
+	if (ret) {
+		dsim_err("failed to activate iovmm\n");
+		goto err_dt;
+	}
+	iovmm_set_fault_handler(dev, dpu_sysmmu_fault_handler, NULL);
+#endif
 
 #if !defined(CONFIG_EXYNOS_EMUL_DISP)
 	phy_init(dsim->phy);

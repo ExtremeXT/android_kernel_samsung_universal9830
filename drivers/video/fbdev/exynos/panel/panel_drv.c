@@ -3737,14 +3737,18 @@ int panel_wake_lock(struct panel_device *panel)
 {
 	int ret = 0;
 
-	ret = decon_wake_lock_global(0, WAKE_TIMEOUT_MSEC);
+	struct decon_device *decon = get_decon_drvdata(0);
 
-	return ret;
+	return decon_wake_lock(decon, WAKE_TIMEOUT_MSEC);
 }
 
 void panel_wake_unlock(struct panel_device *panel)
 {
-	decon_wake_unlock_global(0);
+	int ret = 0;
+
+	struct decon_device *decon = get_decon_drvdata(0);
+
+	return decon_wake_unlock(decon);
 }
 
 static int panel_parse_lcd_info(struct panel_device *panel)

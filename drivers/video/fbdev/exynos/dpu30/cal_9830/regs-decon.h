@@ -147,9 +147,17 @@
 #define DPU_FRAME_START_INT_PEND		(1 << 12)
 #define DPU_EXTRA_INT_PEND			(1 << 4)
 
+#define INT_PEND_UNMASK_START			(1 << 24)
+#define INT_PEND_TE_FALL			(1 << 20)
+#define INT_PEND_TE_RISE			(1 << 16)
+#define INT_PEND_DSIM_LATE_START_ALARM		(1 << 12)
+#define INT_PEND_CWB_INST_OFF			(1 << 8)
+#define INT_PEND_RESOURCE_CONFLICT		(1 << 4)
+#define INT_PEND_TIME_OUT			(1 << 0)
+
 #define EXTRA_INTERRUPT_PENDING			0x0050
-#define DPU_RESOURCE_CONFLICT_INT_PEND		(1 << 8)
-#define DPU_TIME_OUT_INT_PEND			(1 << 4)
+#define DPU_RESOURCE_CONFLICT_INT_PEND		INT_PEND_RESOURCE_CONFLICT
+#define DPU_TIME_OUT_INT_PEND			INT_PEND_TIME_OUT
 
 #define SHADOW_REG_UPDATE_REQ			0x0060
 #define SHADOW_REG_UPDATE_REQ_GLOBAL		(1 << 31)
@@ -661,7 +669,18 @@
 
 #define DSCC_DEBUG_DATA				0x0084
 
-
+#define RSC_STATUS_0				(0x0100)
+#define RSC_STATUS_1				(0x0104)
+#define RSC_STATUS_2				(0x0108)
+#define RSC_STATUS_3				(0x010C)
+#define RSC_STATUS_4				(0x0110)
+#define RSC_STATUS_5				(0x0114)
+#define RSC_STATUS_N(_n)			(0x011C + ((_n - 7) * 0x4))
+#define RSC_STATUS_7				(0x011C)
+#define RSC_STATUS_8				(0x0120)
+#define RSC_STATUS_9				(0x0124)
+#define RSC_STATUS_10				(0x0128)
+#define RSC_STATUS_11				(0x012C)
 
 #define SHADOW_OFFSET				0x7000
 

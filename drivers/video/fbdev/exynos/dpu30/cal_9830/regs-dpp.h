@@ -513,6 +513,10 @@
 #define ODMA_CFG_ERR_DST_WIDTH			(1 << 0)
 #define ODMA_CFG_ERR_GET(_v)			(((_v) >> 0) & 0x1FFFF)
 
+#define DPP_CFG_ERROR_IRQ			(1 << 1)
+#define IDMA_CONFIG_ERR_IRQ			(1 << 21)
+#define IDMA_FBC_ERR_IRQ			(1 << 23)
+
 /*
  * 2 - DPU_WB_MUX.base
  *  Non-secure        : 0x1908_0000

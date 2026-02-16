@@ -12,7 +12,8 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/displayport_bigdata.h>
+
+#include "displayport_bigdata.h"
 
 #define EDID_BUF_SIZE 512
 #define ERR_DATA_BUF_SIZE 1024
@@ -110,6 +111,7 @@ void secdp_bigdata_init(struct class *dp_class)
 	secdp_bigdata_init_error(ERR_LINK_TRAIN, "ERR_LT_TRAIN", 1);
 	secdp_bigdata_init_error(ERR_INF_IRQHPD, "ERR_INF_IRQHPD", 10);
 }
+EXPORT_SYMBOL(secdp_bigdata_init);
 
 static void secdp_bigdata_init_item_str(enum DP_BD_ITEM_LIST item, char *val, int max_len)
 {
@@ -240,6 +242,7 @@ void secdp_bigdata_save_item(enum DP_BD_ITEM_LIST item, ...)
 
 	va_end(vl);
 }
+EXPORT_SYMBOL(secdp_bigdata_save_item);
 
 void secdp_bigdata_inc_error_cnt(enum DP_BD_ITEM_LIST err)
 {
@@ -249,6 +252,7 @@ void secdp_bigdata_inc_error_cnt(enum DP_BD_ITEM_LIST err)
 	if (item_to_column[err].data && item_to_column[err].type == ERR)
 		((struct bd_error_data *)item_to_column[err].data)->count++;
 }
+EXPORT_SYMBOL(secdp_bigdata_inc_error_cnt);
 
 void secdp_bigdata_clr_error_cnt(enum DP_BD_ITEM_LIST err)
 {
@@ -258,6 +262,7 @@ void secdp_bigdata_clr_error_cnt(enum DP_BD_ITEM_LIST err)
 	if (item_to_column[err].data && item_to_column[err].type == ERR)
 		((struct bd_error_data *)item_to_column[err].data)->count = 0;
 }
+EXPORT_SYMBOL(secdp_bigdata_clr_error_cnt);
 
 static void secdp_bigdata_save_data(void)
 {
@@ -351,6 +356,7 @@ void secdp_bigdata_connection(void)
 		}
 	}
 }
+EXPORT_SYMBOL(secdp_bigdata_connection);
 
 void secdp_bigdata_disconnection(void)
 {
@@ -363,3 +369,4 @@ void secdp_bigdata_disconnection(void)
 		secdp_bigdata_save_data();
 
 }
+EXPORT_SYMBOL(secdp_bigdata_disconnection);

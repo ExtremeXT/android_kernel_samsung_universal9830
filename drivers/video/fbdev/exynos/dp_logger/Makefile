@@ -4,7 +4,7 @@
 #
 # Licensed under GPLv2
 #
-
-obj-$(CONFIG_SEC_DISPLAYPORT_LOGGER) += dp_logger.o
-obj-$(CONFIG_SEC_DISPLAYPORT_BIGDATA) += displayport_bigdata.o
-obj-$(CONFIG_SEC_DISPLAYPORT_SELFTEST) += dp_self_test.o
+obj-$(CONFIG_SEC_DISPLAYPORT_EXT_FUNCTION)		+= dp_ext_func.o
+dp_ext_func-$(CONFIG_SEC_DISPLAYPORT_LOGGER)	+= dp_logger.o
+dp_ext_func-$(CONFIG_SEC_DISPLAYPORT_BIGDATA)	+= displayport_bigdata.o
+dp_ext_func-$(CONFIG_SEC_DISPLAYPORT_SELFTEST)	+= dp_self_test.o

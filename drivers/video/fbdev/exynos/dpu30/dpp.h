@@ -19,10 +19,10 @@
 #include <linux/videodev2.h>
 #include <linux/io.h>
 #include <linux/pm_runtime.h>
-#include <soc/samsung/exynos_pm_qos.h>
+#include <linux/pm_qos.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/ion.h>
+#include <linux/ion_exynos.h>
 #include <linux/dma-buf.h>
 #if IS_ENABLED(CONFIG_EXYNOS_BTS) || IS_ENABLED(CONFIG_EXYNOS_BTS_MODULE)
 #include <soc/samsung/bts.h>
@@ -30,8 +30,8 @@
 
 #include "decon.h"
 /* TODO: SoC dependency will be removed */
-#include "./cal_2100/regs-dpp.h"
-#include "./cal_2100/dpp_cal.h"
+#include "./cal_9830/regs-dpp.h"
+#include "./cal_9830/dpp_cal.h"
 
 #if IS_ENABLED(CONFIG_MCD_PANEL)
 #include "mcd.h"

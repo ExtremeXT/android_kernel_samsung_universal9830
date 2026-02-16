@@ -29,13 +29,13 @@
 #include <linux/regulator/consumer.h>
 #include <media/v4l2-dv-timings.h>
 #if defined(CONFIG_CPU_IDLE)
-#include <soc/samsung/exynos-cpupm.h>
+#include <soc/samsung/exynos-powermode.h>
 #endif
 #if defined(CONFIG_SND_SOC_SAMSUNG_DISPLAYPORT)
 #include <sound/samsung/dp_ado.h>
 #endif
 #include <linux/smc.h>
-#include <linux/iommu.h>
+#include <linux/exynos_iovmm.h>
 
 #if defined(CONFIG_PHY_EXYNOS_USBDRD)
 #include "../../../drivers/phy/samsung/phy-exynos-usbdrd.h"
@@ -48,7 +48,7 @@ int reauth_trigger;
 
 int displayport_hdcp22_irq_handler(void)
 {
-#if IS_ENABLED(CONFIG_EXYNOS_HDCP2)
+#if defined(CONFIG_EXYNOS_HDCP2)
 	struct displayport_device *displayport = get_displayport_drvdata();
 	uint8_t rxstatus = 0;
 	int ret = 0;
@@ -113,7 +113,7 @@ void reset_dp_hdcp_module(void)
 
 int displayport_hdcp22_authenticate(void)
 {
-#if IS_ENABLED(CONFIG_EXYNOS_HDCP2)
+#if defined(CONFIG_EXYNOS_HDCP2)
 #ifdef CONFIG_HDCP2_FUNC_TEST_MODE
 	displayport_info("HDCP22 DRM Always On.\n");
 	return hdcp_dplink_auth_check(HDCP_DRM_ON);
@@ -135,7 +135,7 @@ int displayport_hdcp22_authenticate(void)
 
 void displayport_hdcp22_notify_state(enum dp_state state)
 {
-#if IS_ENABLED(CONFIG_EXYNOS_HDCP2)
+#if defined(CONFIG_EXYNOS_HDCP2)
 	hdcp_dplink_connect_state(state);
 #endif
 }

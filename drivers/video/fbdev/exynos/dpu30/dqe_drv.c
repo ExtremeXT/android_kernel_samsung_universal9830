@@ -19,9 +19,7 @@
 
 #include "dqe.h"
 #include "decon.h"
-#if defined(CONFIG_SOC_EXYNOS2100)
-#include "./cal_2100/regs-dqe.h"
-#endif
+#include "./cal_9830/regs-dqe.h"
 
 struct dqe_device *dqe_drvdata;
 struct class *dqe_class;

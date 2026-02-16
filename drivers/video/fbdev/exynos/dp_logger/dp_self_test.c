@@ -18,9 +18,9 @@
 #include <linux/proc_fs.h>
 #include <linux/time.h>
 #include <linux/uaccess.h>
-#include <linux/dp_logger.h>
 #include <linux/device.h>
 
+#include "dp_logger.h"
 #include "dp_self_test.h"
 #include "../dpu30/displayport.h"
 
@@ -68,6 +68,7 @@ static void self_test_process_work(struct work_struct *work);
 
 static DECLARE_WORK(test_work, self_test_process_work);
 static struct self_test_vars g_test_vars;
+int displayport_log_level = 6;
 
 static struct self_test_data test_data[] = {
 	{
@@ -372,17 +373,20 @@ enum dex_support_type self_test_get_dp_adapter_type(void)
 {
 	return g_test_vars.adapter_type;
 }
+EXPORT_SYMBOL(self_test_get_dp_adapter_type);
 
 int self_test_on_process(void)
 {
 	return g_test_vars.test_on_process;
 }
+EXPORT_SYMBOL(self_test_on_process);
 
 int self_test_get_edid(u8 *edid)
 {
 	memcpy(edid, test_data[g_test_vars.data_idx].edid, 256);
 	return edid[0x7e] + 1;
 }
+EXPORT_SYMBOL(self_test_get_edid);
 
 void self_test_resolution_update(u32 xres, u32 yres, u32 fps)
 {
@@ -420,6 +424,7 @@ void self_test_resolution_update(u32 xres, u32 yres, u32 fps)
 	g_test_vars.waiting = 1;
 	wake_up_interruptible(&g_test_vars.test_wait);
 }
+EXPORT_SYMBOL(self_test_resolution_update);
 
 void self_test_audio_param_update(u32 ch, u32 fs, u32 bit)
 {
@@ -485,3 +490,4 @@ void self_test_init(struct displayport_device *displayport, struct class *dp_cla
 	g_test_vars.displayport = displayport;
 	init_waitqueue_head(&g_test_vars.test_wait);
 }
+EXPORT_SYMBOL(self_test_init);

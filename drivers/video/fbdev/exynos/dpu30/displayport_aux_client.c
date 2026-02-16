@@ -456,7 +456,7 @@ int displayport_sideband_msg_rx(u32 msg_type, u8 *data)
 			data[data_size++] = sb_msg_rx_buf[header_size + i];
 	}
 
-	if(displayport_msg_aux_wait_rep_rdy_clr(msg_type) < 0)
+	if (displayport_msg_aux_wait_rep_rdy_clr(msg_type) < 0)
 		displayport_err("MSG_RDY not clr fail\n");
 
 	body_crc = displayport_sideband_msg_body_crc(reply_data_size, data);
@@ -546,7 +546,7 @@ void displayport_msg_rx(u32 msg_type)
 
 MSG_RX_READ_RETRY:
 	for (i = 0; i < max_msg_size; i += msg_rx_buf_size) {
-		if((displayport_msg_aux_wait_rep_rdy(msg_type) < 0) && (retry_cnt > 0)) {
+		if ((displayport_msg_aux_wait_rep_rdy(msg_type) < 0) && (retry_cnt > 0)) {
 			msg_rx_buf_size = 0;
 			total_msg_rx_buf_size = 0;
 			retry_cnt--;
@@ -788,7 +788,7 @@ void displayport_msg_aux_remote_i2c_read(u8 *edid_buf)
 
 REMOTE_I2C_READ_RETRY:
 	for (i = 0; i < max_msg_size; i += msg_rx_buf_size) {
-		if((displayport_msg_aux_wait_rep_rdy(DOWN_REP) < 0) && (retry_cnt > 0)) {
+		if ((displayport_msg_aux_wait_rep_rdy(DOWN_REP) < 0) && (retry_cnt > 0)) {
 			msg_rx_buf_size = 0;
 			total_msg_rx_buf_size = 0;
 			retry_cnt--;

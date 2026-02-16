@@ -7,16 +7,14 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
-*/
+ */
 
 #include <linux/fb.h>
-#include <linux/module.h>
 #include "displayport.h"
 
 #ifdef FEATURE_SUPPORT_DISPLAYID
 #include <drm/drm_displayid.h>
 #endif
-
 #ifdef CONFIG_SEC_DISPLAYPORT_SELFTEST
 #include "../dp_logger/dp_self_test.h"
 #endif
@@ -34,17 +32,7 @@
 
 #define DETAILED_TIMING_DESCRIPTIONS_START	0x36
 
-/* force set video format of resolution
- * 0	V640X480P60, V720X480P60, V720X576P50, V1280X800P60RB, 	V1280X720P50,
- * 5	V1280X720P60, V1366X768P60, V1280X1024P60, V1920X1080P24, V1920X1080P25,
- * 10	V1920X1080P30, V1600X900P59, V1600X900P60RB, V1920X1080P50, V1920X1080P59,
- * 15	V1920X1080P60, V2048X1536P60, V1920X1440P60, V2560X1440P59, V1440x2560P60,
- * 20	V1440x2560P75, V2560X1440P60, V3840X2160P24, V3840X2160P25, V3840X2160P30,
- * 25	V4096X2160P24, V4096X2160P25, V4096X2160P30, V3840X2160P59RB, V3840X2160P50,
- * 30	V3840X2160P60, V4096X2160P50, V4096X2160P60, V640X10P60SACRC,
- */
 int forced_resolution = -1;
-module_param(forced_resolution, int, 0644);
 
 videoformat ud_mode_h14b_vsdb[] = {
 	V3840X2160P30,
@@ -88,7 +76,7 @@ void edid_check_set_i2c_capabilities(void)
 	}
 }
 
-int edid_checksum(u8 *data, int block)
+static int edid_checksum(u8 *data, int block)
 {
 	int i;
 	u8 sum = 0, all_null = 0;
@@ -171,7 +159,7 @@ static int edid_check_extension_tag(u8 ext_tag)
 	}
 }
 
-int __mockable edid_read(u32 sst_id, struct displayport_device *displayport)
+int edid_read(u32 sst_id, struct displayport_device *displayport)
 {
 	int block = 0;
 	int block_cnt = 0;
@@ -278,8 +266,7 @@ static int fb_video_to_dt_timing(const struct fb_videomode *fb, videoformat vide
 
 static void edid_video_timing_print(struct displayport_supported_preset *video)
 {
-	displayport_dbg("w:%d, h:%d, i:%d, px:%d, hfp:%d, hs:%d, hbp:%d, vfp:%d, vs:%d, vbp:%d," \
-			" fps:%d, vpol:%d, hpol:%d, supp:%d, dex:%d, ratio:%d\n",
+	displayport_dbg("w:%d, h:%d, i:%d, px:%d, hfp:%d, hs:%d, hbp:%d, vfp:%d, vs:%d, vbp:%d",
 		video->dv_timings.bt.width,
 		video->dv_timings.bt.height,
 		video->dv_timings.bt.interlaced,
@@ -289,7 +276,8 @@ static void edid_video_timing_print(struct displayport_supported_preset *video)
 		video->dv_timings.bt.hbackporch,
 		video->dv_timings.bt.vfrontporch,
 		video->dv_timings.bt.vsync,
-		video->dv_timings.bt.vbackporch,
+		video->dv_timings.bt.vbackporch);
+	displayport_dbg("fps:%d, vpol:%d, hpol:%d, supp:%d, dex:%d, ratio:%d\n",
 		video->fps,
 		video->v_sync_pol,
 		video->h_sync_pol,
@@ -447,12 +435,12 @@ void edid_parse_hdmi14_vsdb(unsigned char *edid_ext_blk,
 					displayport_dbg("EDID: Not support I_LATENCY_FILEDS_PRESETNT in VSDB\n");
 				}
 
+				hdmi_vic_len = (edid_ext_blk[i + vsdb_offset_calc]
+						& VSDB_VIC_LENGTH_MASK) >> VSDB_VIC_LENGTH_BIT_POSITION;
+
 				/* check if vsdb length is enough for vic data */
 				if (vsdb_len < vsdb_offset_calc)
 					break;
-
-				hdmi_vic_len = (edid_ext_blk[i + vsdb_offset_calc]
-						& VSDB_VIC_LENGTH_MASK) >> VSDB_VIC_LENGTH_BIT_POSITION;
 
 				if (hdmi_vic_len > 0) {
 					vsdb->vic_len = hdmi_vic_len;
@@ -587,12 +575,8 @@ void edid_parse_hdr_metadata(u32 sst_id, struct displayport_device *displayport,
 				displayport->sst[sst_id]->rx_edid_data.eotf);
 
 			if (displayport->sst[sst_id]->rx_edid_data.eotf & SMPTE_ST_2084) {
-				if (displayport->dfp_type == DFP_TYPE_DP) {
-					displayport_info("EDID: SMPTE_ST_2084 support\n");
-					displayport->sst[sst_id]->rx_edid_data.hdr_support = 1;
-				} else {
-					displayport_info("EDID: SMPTE_ST_2084 support, but only DP adapter\n");
-				}
+				displayport->sst[sst_id]->rx_edid_data.hdr_support = 1;
+				displayport_info("EDID: SMPTE_ST_2084 support\n");
 			}
 
 			displayport->sst[sst_id]->rx_edid_data.max_lumi_data =
@@ -1073,24 +1057,25 @@ int edid_update(u32 sst_id, struct displayport_device *displayport)
 				supported_videos[i].timing_type == DISPLAYID_EXT)
 			edid_reset_dt_timing(i);
 	}
-
+	if (displayport->do_unit_test) {
+		displayport_info("unit test: edid read\n");
+		block_cnt = edid_read_unit(&edid);
+	}
 #ifdef CONFIG_DISPLAYPORT_ENG
 	if (displayport->edid_test_buf[0] > 0 && displayport->edid_test_buf[0] < 5) {
 		displayport_info("user edid test\n");
 		memcpy(edid, &displayport->edid_test_buf[1], displayport->edid_test_buf[0] * 128);
 		block_cnt = displayport->edid_test_buf[0];
 		displayport_info("using test edid %d\n", block_cnt);
-	} else
-#endif
-#ifdef CONFIG_SEC_DISPLAYPORT_SELFTEST
-	if (self_test_on_process()) {
-		block_cnt = self_test_get_edid(edid);
-		displayport_info("self test edid %d\n", block_cnt);
-	} else
-#endif
-	{
-		block_cnt = edid_read(sst_id, displayport);
 	}
+#ifdef CONFIG_SEC_DISPLAYPORT_SELFTEST
+	else if (self_test_on_process()) {
+		block_cnt = self_test_get_edid(edid);
+	}
+#endif
+#endif
+	else
+		block_cnt = edid_read(sst_id, displayport);
 	if (block_cnt < 1 || block_cnt > 4)
 		goto error;
 
@@ -1117,13 +1102,11 @@ int edid_update(u32 sst_id, struct displayport_device *displayport)
 	for (i = 1; i < block_cnt; i++) {
 		u8 *edid_ext = edid + i * EDID_BLOCK_SIZE;
 
-		if (*edid_ext == 0x2) {
+		if (*edid_ext == 0x2)
 			fb_edid_add_monspecs(edid_ext, &specs);
-		}
 #ifdef FEATURE_SUPPORT_DISPLAYID
-		else if (*edid_ext == 0x70) {
+		else if (*edid_ext == 0x70)
 			edid_add_displayid_detailed_modes(sst_id, edid_ext);
-		}
 #endif
 	}
 
@@ -1259,7 +1242,6 @@ struct fb_audio *edid_get_test_audio_info(void)
 {
 	return &test_audio_info;
 }
-EXPORT_SYMBOL(edid_get_test_audio_info);
 
 u8 edid_read_checksum(void)
 {

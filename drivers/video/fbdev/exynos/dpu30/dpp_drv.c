@@ -20,7 +20,7 @@
 #include "dpp.h"
 #include "decon.h"
 #include "format.h"
-#include <dt-bindings/soc/samsung/exynos2100-devfreq.h>
+#include <dt-bindings/soc/samsung/exynos9830-devfreq.h>
 #include <soc/samsung/exynos-devfreq.h>
 
 #if defined(SYSFS_UNITTEST_INTERFACE)
@@ -687,7 +687,7 @@ static int dpp_set_config(struct dpp_device *dpp)
 
 	dpp->state = DPP_STATE_ON;
 	/* to prevent irq storm, irq enable is moved here */
-	dpp_reg_irq_enable(dpp->id, dpp->attr);
+	//dpp_reg_irq_enable(dpp->id, dpp->attr);
 err:
 	mutex_unlock(&dpp->lock);
 	return ret;
@@ -1458,6 +1458,7 @@ static int dpp_init_resources(struct dpp_device *dpp, struct platform_device *pd
  */
 static int dpp_set_output_device(struct dpp_device *dpp)
 {
+	int ret = 0;
 	if (!IS_WB(dpp->attr))
 		return 0;
 
@@ -1473,7 +1474,11 @@ static int dpp_set_output_device(struct dpp_device *dpp)
 #endif
 
 	pm_runtime_enable(dpp->dev);
-	iommu_register_device_fault_handler(dpp->dev, dpu_sysmmu_fault_handler_wb, NULL);
+	ret = iovmm_activate(dpp->dev);
+	if (ret) {
+		dpp_err("failed to activate iovmm\n");
+		return ret;
+	}
 
 	dpp->wb_state = WBMUX_STATE_OFF;
 	dpp_dbg("%s -\n", __func__);

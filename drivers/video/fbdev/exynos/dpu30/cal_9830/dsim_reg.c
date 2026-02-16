@@ -1218,7 +1218,7 @@ static void dsim_reg_get_cmd_timer(unsigned int fps, unsigned int *te_protect,
 	*te_timeout = hs_clk * (100 + TE_MARGIN * 2) * 100 / fps / 16;
 }
 
-static void dsim_reg_set_cmd_ctrl(u32 id, struct exynos_panel_info *lcd_info,
+void dsim_reg_set_cmd_ctrl(u32 id, struct exynos_panel_info *lcd_info,
 						struct dsim_clks *clks)
 {
 	unsigned int time_stable_vfp;
@@ -1426,7 +1426,7 @@ static void dsim_reg_enable_deskew_hw_enable(u32 id, u32 en)
 	dsim_write_mask(id, DSIM_DESKEW_CTRL, val, DSIM_DESKEW_CTRL_HW_EN);
 }
 
-static void dsim_reg_set_cm_underrun_lp_ref(u32 id, u32 lp_ref)
+void dsim_reg_set_cm_underrun_lp_ref(u32 id, u32 lp_ref)
 {
 	u32 val = DSIM_UNDERRUN_CTRL_CM_UNDERRUN_LP_REF(lp_ref);
 

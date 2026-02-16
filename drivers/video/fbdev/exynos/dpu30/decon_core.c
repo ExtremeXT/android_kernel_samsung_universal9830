@@ -21,7 +21,7 @@
 #include <linux/clk-provider.h>
 #include <linux/console.h>
 #include <linux/dma-buf.h>
-#include <linux/ion.h>
+#include <linux/ion_exynos.h>
 #include <uapi/linux/sched/types.h>
 #include <linux/highmem.h>
 #include <linux/memblock.h>
@@ -34,7 +34,7 @@
 #if !defined(CONFIG_UML)
 #include <soc/samsung/cal-if.h>
 #endif
-#include <dt-bindings/soc/samsung/exynos2100-devfreq.h>
+#include <dt-bindings/soc/samsung/exynos9830-devfreq.h>
 #include <soc/samsung/exynos-devfreq.h>
 
 #include "format.h"
@@ -67,8 +67,6 @@
 #define CREATE_TRACE_POINTS
 /* decon systrace */
 #include <trace/events/systrace.h>
-
-#include <linux/dma-heap.h>
 
 int decon_log_level = 6;
 module_param(decon_log_level, int, 0644);
@@ -218,8 +216,8 @@ void decon_dump(struct decon_device *decon)
 	}
 
 	/* decon2 needs decon0 setting info */
-	if (decon->id)
-		__decon_dump(0, main_regs, win_regs, sub_regs, wincon_regs, dqe_regs, dsc_en);
+	//if (decon->id)
+		//__decon_dump(0, main_regs, win_regs, sub_regs, wincon_regs, dqe_regs, dsc_en);
 
 	offset = decon->id * 0x1000;
 	main_regs = get_decon_drvdata(decon->id)->res.regs + offset;
@@ -229,7 +227,7 @@ void decon_dump(struct decon_device *decon)
 	dqe_regs = get_decon_drvdata(decon->id)->res.dqe_regs;
 	dsc_en = get_decon_drvdata(decon->id)->lcd_info->dsc.en;
 
-	__decon_dump(decon->id, main_regs, win_regs, sub_regs, wincon_regs, dqe_regs, dsc_en);
+	//__decon_dump(decon->id, main_regs, win_regs, sub_regs, wincon_regs, dqe_regs, dsc_en);
 
 	if (decon->dt.out_type == DECON_OUT_DSI)
 		v4l2_subdev_call(decon->out_sd[0], core, ioctl,
@@ -2988,8 +2986,8 @@ video_emul_check_done:
 				if (decon->lcd_info->fps != regs->fps)
 					dpu_update_fps(decon, regs->fps);
 #if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
-				if (prev_fps != regs->fps)
-					migov_update_fps_change(regs->fps);
+				//if (prev_fps != regs->fps)
+					//migov_update_fps_change(regs->fps);
 #endif
 			}
 		} else {
@@ -4299,7 +4297,7 @@ static int decon_ioctl(struct fb_info *info, unsigned int cmd,
 			break;
 		}
 		mutex_unlock(&decon->lock);
-		decon_reg_set_start_crc(decon->id, 0, crc_start);
+		decon_reg_set_start_crc(decon->id, crc_start);
 		break;
 
 	case S3CFB_SEL_CRC_BITS:
@@ -5001,7 +4999,6 @@ static int decon_fb_alloc_memory(struct decon_device *decon, struct decon_win *w
 	unsigned int real_size, virt_size, size;
 	dma_addr_t map_dma;
 	struct dma_buf *buf = NULL;
-	struct dma_heap *dma_heap;
 	void *vaddr;
 	unsigned int ret;
 
@@ -5021,40 +5018,17 @@ static int decon_fb_alloc_memory(struct decon_device *decon, struct decon_win *w
 	fbi->fix.smem_len = size;
 	size = PAGE_ALIGN(size);
 
-	// dev_info(decon->dev, "want %u bytes for window[%d]\n", size, win->idx);
-	// buf = ion_alloc((size_t)size, ION_HEAP_SYSTEM, 0);
-	// if (IS_ERR(buf)) {
-	// 	dev_err(decon->dev, "ion_share_dma_buf() failed\n");
-	// 	goto err_share_dma_buf;
-	// }
-
 	dev_info(decon->dev, "want %u bytes for window[%d]\n", size, win->idx);
 
-	dma_heap = dma_heap_find("system-uncached");
-	if (dma_heap) {
-		buf = dma_heap_buffer_alloc(dma_heap, (size_t)size, 0, 0);
-		dma_heap_put(dma_heap);
-	} else {
-		pr_err("dma_heap_find() failed\n");
-		goto err_share_dma_buf;
-	}
-	if (IS_ERR(buf)) {
-		dev_err(dsim->dev, "ion_alloc() failed\n");
-		goto err_share_dma_buf;
-	}
-
+	buf = ion_alloc_dmabuf("ion_system_heap", (size_t)size, 0);
 
 	vaddr = dma_buf_vmap(buf);
 	if (IS_ERR_OR_NULL(vaddr)) {
-		dev_err(decon->dev, "dma_buf_vmap() failed\n");
+		dev_err(dsim->dev, "ion_alloc() failed\n");
 		goto err_map;
 	}
 
-#if defined(CONFIG_EXYNOS_EMUL_DISP)
-	memset(vaddr, 0x80, size);
-#else
 	memset(vaddr, 0x00, size);
-#endif
 
 	fbi->screen_base = vaddr;
 
@@ -5113,7 +5087,6 @@ static int decon_fb_test_alloc_memory(struct decon_device *decon, u32 size)
 	struct device *dev = NULL;
 	dma_addr_t map_dma;
 	struct dma_buf *buf;
-	struct dma_heap *dma_heap;
 	void *vaddr;
 	unsigned int ret;
 
@@ -5123,29 +5096,14 @@ static int decon_fb_test_alloc_memory(struct decon_device *decon, u32 size)
 	size = PAGE_ALIGN(size);
 	fbi->fix.smem_len = size;
 
-	// dev_info(decon->dev, "want %u bytes for window[%d]\n", size, win->idx);
-
-	// buf = ion_alloc((size_t)size, ION_HEAP_SYSTEM, 0);
-	// if (IS_ERR(buf)) {
-	// 	dev_err(decon->dev, "ion_share_dma_buf() failed\n");
-	// 	goto err_share_dma_buf;
-	// }
-
 	dev_info(decon->dev, "want %u bytes for window[%d]\n", size, win->idx);
 
-		dma_heap = dma_heap_find("system-uncached");
-		if (dma_heap) {
-			buf = dma_heap_buffer_alloc(dma_heap, (size_t)size, 0, 0);
-			dma_heap_put(dma_heap);
-		} else {
-			pr_err("dma_heap_find() failed\n");
-			goto err_share_dma_buf;
-		}
-		if (IS_ERR(buf)) {
-			dev_err(dsim->dev, "ion_alloc() failed\n");
-			goto err_share_dma_buf;
-		}
-
+	buf = ion_alloc_dmabuf("ion_system_heap", (size_t)size, 0);
+	if (IS_ERR(buf)) {
+		dev_err(decon->dev, "ion_share_dma_buf() failed\n");
+		goto err_share_dma_buf;
+	}
+	
 	vaddr = dma_buf_vmap(buf);
 	if (IS_ERR_OR_NULL(vaddr)) {
 		dev_err(decon->dev, "dma_buf_vmap() failed\n");
@@ -6133,8 +6091,8 @@ static int decon_probe(struct platform_device *pdev)
 
 #if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
 	if (decon->dt.out_type == DECON_OUT_DSI) {
-		exynos_migov_register_frame_cnt(get_ems_frame_cnt);
-		exynos_migov_register_fence_cnt(get_ems_fence_cnt);
+		//exynos_migov_register_frame_cnt(get_ems_frame_cnt);
+		//exynos_migov_register_fence_cnt(get_ems_fence_cnt);
 	}
 #endif
 

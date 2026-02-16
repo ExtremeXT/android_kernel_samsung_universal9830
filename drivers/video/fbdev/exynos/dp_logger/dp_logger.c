@@ -18,8 +18,9 @@
 #include <linux/proc_fs.h>
 #include <linux/time.h>
 #include <linux/uaccess.h>
-#include <linux/dp_logger.h>
 #include <linux/sched/clock.h>
+
+#include "dp_logger.h"
 
 #define BUF_SIZE	SZ_64K
 #define MAX_STR_LEN	160
@@ -58,6 +59,7 @@ void dp_logger_set_max_count(int count)
 	dp_logger_print_date_time();
 	log_count = PRINT_DATE_FREQ;
 }
+EXPORT_SYMBOL(dp_logger_set_max_count);
 
 void dp_logger_print(const char *fmt, ...)
 {
@@ -101,6 +103,7 @@ void dp_logger_print(const char *fmt, ...)
 	memcpy(log_buf + curpos, buf, len);
 	g_curpos += len;
 }
+EXPORT_SYMBOL(dp_logger_print);
 
 void dp_print_hex_dump(void *buf, void *pref, size_t size)
 {
@@ -133,6 +136,7 @@ void dp_print_hex_dump(void *buf, void *pref, size_t size)
 		dp_logger_print("%s%s\n", pref, tmp);
 	}
 }
+EXPORT_SYMBOL(dp_print_hex_dump);
 
 static ssize_t dp_logger_read(struct file *file, char __user *buf, size_t len, loff_t *offset)
 {
@@ -165,6 +169,7 @@ static ssize_t dp_logger_read(struct file *file, char __user *buf, size_t len, l
 static const struct file_operations dp_logger_ops = {
 	.owner = THIS_MODULE,
 	.read = dp_logger_read,
+	.llseek = default_llseek,
 };
 
 int dp_logger_init(void)
@@ -186,3 +191,7 @@ int dp_logger_init(void)
 
 	return 0;
 }
+EXPORT_SYMBOL(dp_logger_init);
+
+MODULE_DESCRIPTION("SEC Displaport logger");
+MODULE_LICENSE("GPL");

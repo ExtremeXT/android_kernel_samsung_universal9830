@@ -27,6 +27,7 @@
 
 #define BTS_DPU_MAX		3 /* DPU0 ~ 2 */
 #define BTS_DPP_MAX		6 /* DPP0 ~ 5 */
+#define BTS_DFS_MAX		8 /* DPU DVFS Level */
 
 enum decon_idma_type {
 	IDMA_G0 = 0,
@@ -259,6 +260,7 @@ int decon_reg_stop(u32 id, u32 dsi_idx, struct decon_mode_info *psr, bool rst,
 		u32 fps);
 int decon_reg_stop_inst(u32 id, u32 dsi_idx, struct decon_mode_info * psr,
 		u32 fps);
+int decon_reg_reset(u32 id);
 
 /* DECON window control */
 void decon_reg_set_win_enable(u32 id, u32 win_idx, u32 en);

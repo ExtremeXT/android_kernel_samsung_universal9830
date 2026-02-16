@@ -11,7 +11,7 @@
 
 #include "mcd_decon.h"
 #include "panel_drv.h"
-#include "./cal_2100/decon_cal.h"
+#include "./cal_9830/decon_cal.h"
 
 #ifdef CONFIG_MCDHDR
 #include "./mcdhdr/mcdhdr.h"

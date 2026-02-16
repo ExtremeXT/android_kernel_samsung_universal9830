@@ -20,7 +20,7 @@
 #include <linux/interrupt.h>
 #include <linux/wait.h>
 #include <linux/kthread.h>
-#include <soc/samsung/exynos_pm_qos.h>
+#include <linux/pm_qos.h>
 #include <linux/delay.h>
 #include <linux/seq_file.h>
 #include <linux/platform_device.h>
@@ -42,8 +42,8 @@
 #include <linux/sync_file.h>
 
 /* TODO: SoC dependency will be removed */
-#include "./cal_2100/regs-decon.h"
-#include "./cal_2100/decon_cal.h"
+#include "./cal_9830/regs-decon.h"
+#include "./cal_9830/decon_cal.h"
 
 #include "./panels/exynos_panel.h"
 #include "dsim.h"
@@ -80,10 +80,6 @@ extern int decon_systrace_enable;
 extern struct decon_bts_ops decon_bts_control;
 #if IS_ENABLED(CONFIG_MCD_PANEL)
 extern int panel_cmd_log_level;
-enum {
-	PANEL_CMD_LOG_DSI_TX,
-	PANEL_CMD_LOG_DSI_RX,
-};
 #endif
 #if defined(CONFIG_UML)
 static inline int cal_pd_control(unsigned int id, int on) { return 0; }
@@ -1320,9 +1316,9 @@ struct decon_bts {
 	struct bts_decon_info bts_info;
 #endif
 	struct decon_bts_ops *ops;
-	struct exynos_pm_qos_request mif_qos;
-	struct exynos_pm_qos_request int_qos;
-	struct exynos_pm_qos_request disp_qos;
+	struct pm_qos_request mif_qos;
+	struct pm_qos_request int_qos;
+	struct pm_qos_request disp_qos;
 	u32 scen_updated;
 };
 
@@ -2251,9 +2247,8 @@ void dpu_cursor_win_update_config(struct decon_device *decon,
 		struct decon_reg_data *regs);
 int decon_set_cursor_win_config(struct decon_device *decon, int x, int y);
 void dpu_init_cursor_mode(struct decon_device *decon);
-int dpu_sysmmu_fault_handler_dsim(struct iommu_fault *fault, void *data);
-int dpu_sysmmu_fault_handler_displayport(struct iommu_fault *fault, void *data);
-int dpu_sysmmu_fault_handler_wb(struct iommu_fault *fault, void *data);
+int dpu_sysmmu_fault_handler(struct iommu_domain *domain,
+	struct device *dev, unsigned long iova, int flags, void *token);
 #if IS_ENABLED(CONFIG_EXYNOS_PD)
 int dpu_pm_domain_check_status(struct exynos_pm_domain *pm_domain);
 #endif

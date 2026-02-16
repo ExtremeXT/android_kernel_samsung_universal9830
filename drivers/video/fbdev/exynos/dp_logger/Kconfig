@@ -1,3 +1,12 @@
+config SEC_DISPLAYPORT_EXT_FUNCTION
+	tristate "DISPLAYPORT self test"
+	default n
+	help
+	 This config is for supporting additional functions.
+	 1. logger
+	 2. bigdata
+	 3. selftest
+
 config SEC_DISPLAYPORT_LOGGER
 	bool "DISPLAYPORT logger"
 	default n
@@ -20,3 +29,9 @@ config SEC_DISPLAYPORT_SELFTEST
 	 1. check if displayport is enabled.
 	 2. check if resolution is correct.
 	 3. additional functions can be added.
+
+config SEC_DISPLAYPORT
+	bool "Enable featuring of CONFIG_SEC_DISPLAYPORT"
+	default n
+	help
+	  Enable SEC DISPLAYPORT config to check if DP support.

@@ -15,7 +15,7 @@
 #include <asm/cacheflush.h>
 #include <asm/page.h>
 #if IS_ENABLED(CONFIG_EXYNOS_CONTENT_PATH_PROTECTION)
-#include <soc/samsung/exynos-smc.h>
+#include <linux/smc.h>
 #endif
 
 #include "decon.h"
@@ -119,7 +119,7 @@ static int __panel_match_dev(struct decon_device *decon, struct device *dev)
 	return ret;
 }
 
-static int __dpu_match_dev(struct device *dev, const void *data)
+static int __dpu_match_dev(struct device *dev, void *data)
 {
 	int i, ret = 0;
 	struct decon_device *decon = (struct decon_device *)data;	
@@ -150,7 +150,7 @@ static int __dpu_match_dev(struct device *dev, const void *data)
 }
 #else
 
-static int __dpu_match_dev(struct device *dev, const void *data)
+static int __dpu_match_dev(struct device *dev, void *data)
 {
 	struct dpp_device *dpp;
 	struct dsim_device *dsim;
@@ -553,59 +553,24 @@ static int dpu_dump_buffer_data(struct dpp_device *dpp)
 }
 #endif
 
-int dpu_sysmmu_fault_handler_dsim(struct iommu_fault *fault, void *data)
+int dpu_sysmmu_fault_handler(struct iommu_domain *domain,
+	struct device *dev, unsigned long iova, int flags, void *token)
 {
 	struct decon_device *decon = NULL;
 	struct dpp_device *dpp = NULL;
 	int i;
 
-	decon = get_decon_drvdata(0);
-
-	for (i = 0; i < decon->dt.dpp_cnt; i++) {
-		if (test_bit(i, &decon->prev_used_dpp)) {
-			dpp = get_dpp_drvdata(i);
-#if defined(DPU_DUMP_BUFFER_IRQ)
-			dpu_dump_buffer_data(dpp);
-#endif
-		}
-	}
-
-	decon_dump(decon);
-
-	return 0;
-}
-
+	if (!strcmp(DSIM_MODULE_NAME, dev->driver->name)) {
+		decon = get_decon_drvdata(0);
 #if defined(CONFIG_EXYNOS_DISPLAYPORT)
-int dpu_sysmmu_fault_handler_displayport(struct iommu_fault *fault, void *data)
-{
-	struct decon_device *decon = NULL;
-	struct dpp_device *dpp = NULL;
-	int i;
-
-	decon = get_decon_drvdata(DEFAULT_DECON_ID);
-
-	for (i = 0; i < decon->dt.dpp_cnt; i++) {
-		if (test_bit(i, &decon->prev_used_dpp)) {
-			dpp = get_dpp_drvdata(i);
-#if defined(DPU_DUMP_BUFFER_IRQ)
-			dpu_dump_buffer_data(dpp);
+	} else if (!strcmp(DISPLAYPORT_MODULE_NAME, dev->driver->name)) {
+		decon = get_decon_drvdata(2);
 #endif
-		}
+	} else {
+		decon_err("unknown driver for dpu sysmmu falut handler(%s)\n",
+				dev->driver->name);
+		return -EINVAL;
 	}
-
-	decon_dump(decon);
-
-	return 0;
-}
-#endif
-
-int dpu_sysmmu_fault_handler_wb(struct iommu_fault *fault, void *data)
-{
-	struct decon_device *decon = NULL;
-	struct dpp_device *dpp = NULL;
-	int i;
-
-	decon = get_decon_drvdata(2);
 
 	for (i = 0; i < decon->dt.dpp_cnt; i++) {
 		if (test_bit(i, &decon->prev_used_dpp)) {

@@ -13,7 +13,7 @@
 #include "../format.h"
 
 /******************* DECON CAL functions *************************/
-static int decon_reg_reset(u32 id)
+int decon_reg_reset(u32 id)
 {
 	int tries;
 
@@ -576,7 +576,7 @@ static void decon_reg_set_ewr_control(u32 id, u32 cnt, u32 en)
 
 static void dsc_reg_swreset(u32 dsc_id)
 {
-	dsc_write_mask(dsc_id, DSC_CONTROL0, 1, DSC_SW_RESET);
+	dsc_write_mask(DSC_CONTROL0(dsc_id), 1, DSC_SW_RESET);
 }
 
 static void dsc_reg_set_slice_mode_change(u32 dsc_id, u32 en)
@@ -584,7 +584,7 @@ static void dsc_reg_set_slice_mode_change(u32 dsc_id, u32 en)
 	u32 val;
 
 	val = DSC_SLICE_MODE_CH_F(en);
-	dsc_write_mask(dsc_id, DSC_CONTROL0, val, DSC_SLICE_MODE_CH_MASK);
+	dsc_write_mask(DSC_CONTROL0(dsc_id), val, DSC_SLICE_MODE_CH_MASK);
 }
 
 static void dsc_reg_set_dual_slice(u32 dsc_id, u32 en)
@@ -592,7 +592,7 @@ static void dsc_reg_set_dual_slice(u32 dsc_id, u32 en)
 	u32 val;
 
 	val = DSC_DUAL_SLICE_EN_F(en);
-	dsc_write_mask(dsc_id, DSC_CONTROL0, val, DSC_DUAL_SLICE_EN_MASK);
+	dsc_write_mask(DSC_CONTROL0(dsc_id), val, DSC_DUAL_SLICE_EN_MASK);
 }
 
 /*
@@ -610,7 +610,7 @@ static void dsc_reg_set_pps_06_07_picture_height(u32 dsc_id, u32 height)
 
 	val = PPS06_07_PIC_HEIGHT(height);
 	mask = PPS06_07_PIC_HEIGHT_MASK;
-	dsc_write_mask(dsc_id, DSC_PPS04_07, val, mask);
+	dsc_write_mask(DSC_PPS04_07(dsc_id), val, mask);
 }
 
 static void dsc_reg_set_pps_58_59_rc_range_param0(u32 dsc_id, u32 rc_range_param)
@@ -619,7 +619,7 @@ static void dsc_reg_set_pps_58_59_rc_range_param0(u32 dsc_id, u32 rc_range_param
 
 	val = PPS58_59_RC_RANGE_PARAM(rc_range_param);
 	mask = PPS58_59_RC_RANGE_PARAM_MASK;
-	dsc_write_mask(dsc_id, DSC_PPS56_59, val, mask);
+	dsc_write_mask(DSC_PPS56_59(dsc_id), val, mask);
 }
 
 /* full size default value */
