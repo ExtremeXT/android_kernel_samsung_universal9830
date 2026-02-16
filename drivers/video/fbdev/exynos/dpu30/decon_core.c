@@ -75,10 +75,13 @@ int dpu_dma_buf_log_level = 6;
 module_param(dpu_dma_buf_log_level, int, 0644);
 int decon_systrace_enable;
 
-#ifdef CONFIG_EXYNOS_FPS_CHANGE_NOTIFY
 u64 ems_frame_cnt;
-EXPORT_SYMBOL(ems_frame_cnt);
-#endif
+ktime_t ems_frame_cnt_time;
+void get_ems_frame_cnt(u64 *cnt, ktime_t *time)
+{
+	*cnt = ems_frame_cnt;
+	*time = ems_frame_cnt_time;
+}
 
 struct decon_device *decon_drvdata[MAX_DECON_CNT];
 EXPORT_SYMBOL(decon_drvdata);
@@ -1441,47 +1444,6 @@ int decon_wait_for_vsync(struct decon_device *decon, u32 timeout)
 	return 0;
 }
 
-#if defined(CONFIG_DECON_VRR_MODULATION)
-/*
- * decon_wait_for_active_region()
- * This function is intended to wait until trigger mask safe region.
- */
-int decon_wait_for_active_region(struct decon_device *decon, u32 timeout)
-{
-	int ret;
-	u64 count, div_count;
-
-	/*
-	 * TODO : * this is critical section, so it should be synchronized.
-	 * error case)
-	 * initial state: vsync.count = 1, vsync.div_count = 2
-	 * if isr updates 'vsync.count++' right after 'count' is assigned,
-	 * (count = 1, vsync.count = 2), routine won't wait vsync,
-	 * but decon_vsync_thread() will notify "vsync" to hw composer.
-	 *
-	 * then panel re-sync according to frame(2C command) at next vsync.
-	 * during this time, vsync will be occurred as 120hz.
-	 */
-
-	/*
-	 * wait for n-vsync times.
-	 * n-vsync : max(0, aligned(vsync.count - vsync.div_count) - 1)
-	 */
-	div_count = IS_DECON_DOZE_STATE(decon) ? 1ULL : decon->vsync.div_count;
-	for (count = (decon->vsync.count % div_count) + 1;
-			count < div_count; count++) {
-		ret = decon_wait_for_vsync(decon, timeout);
-		if (ret < 0) {
-			decon_err("decon%d wait for active region among (%llu)-vsync\n",
-					decon->id, div_count);
-			return ret;
-		}
-	}
-
-	return 0;
-}
-#endif
-
 static int decon_find_biggest_block_rect(struct decon_device *decon,
 		int win_no, struct decon_win_config *win_config,
 		struct decon_rect *block_rect, bool *enabled)
@@ -2593,9 +2555,6 @@ static int __decon_update_regs(struct decon_device *decon, struct decon_reg_data
 	if (decon->dt.out_type == DECON_OUT_DSI)
 		decon->last_update_time = ktime_get();
 #endif
-#if defined(CONFIG_DECON_VRR_MODULATION)
-	decon_wait_for_active_region(decon, VSYNC_TIMEOUT_MSEC);
-#endif
 #ifdef CONFIG_SUPPORT_MASK_LAYER
 	decon_set_mask_layer(decon, regs, 0);
 #endif
@@ -3039,8 +2998,8 @@ static void decon_update_regs(struct decon_device *decon,
 	int import_cnt;
 	ktime_t import_time;
 	struct decon_mode_info psr;
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
-	struct dsim_device *dsim;
+#if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
+	u32 prev_fps, wait_fence = false;
 #endif
 	int i, j, err;
 #ifdef CONFIG_PROFILE_WINCONFIG
@@ -3083,15 +3042,19 @@ static void decon_update_regs(struct decon_device *decon,
 	decon_systrace(decon, 'C', "decon_fence_wait", 1);
 	for (i = 0; i < decon->dt.max_win; i++) {
 		if (regs->dma_buf_data[i][0].fence) {
+#if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
+			wait_fence = true;
+#endif
 			err = decon_wait_fence(decon,
 					regs->dma_buf_data[i][0].fence,
 					regs->dpp_config[i].acq_fence);
 			if (err <= 0) {
 				decon_save_cur_buf_info(decon, regs);
 				decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
-				decon->win_up.force_full = true;
-				DPU_EVENT_LOG_WINCON(&decon->sd, regs,
-					UH_ID_IFENCE_ERR);
+				if (regs->need_update)
+					decon_update_win_update(decon, regs);
+				else
+					decon->win_up.force_full = true;
 				goto fence_err;
 			}
 		}
@@ -3156,11 +3119,9 @@ static void decon_update_regs(struct decon_device *decon,
 		dpu_update_mres_lcd_info(decon, regs);
 
 #if defined(CONFIG_EXYNOS_BTS)
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
 	/* add calc and update bw : cur > prev */
 	/* TODO: if multi resolution requeset X */
-	if (!(regs->dpp_config[DECON_WIN_UPDATE_IDX].state &
-			DECON_WIN_STATE_MRESOL)) {
+	if (regs->dpp_config[DECON_WIN_UPDATE_IDX].state != DECON_WIN_STATE_MRESOL) {
 		decon->bts.ops->bts_calc_bw(decon, regs);
 		decon->bts.ops->bts_update_bw(decon, regs, 0);
 	}
@@ -3168,7 +3129,6 @@ static void decon_update_regs(struct decon_device *decon,
 	/* add calc and update bw : cur > prev */
 	decon->bts.ops->bts_calc_bw(decon, regs);
 	decon->bts.ops->bts_update_bw(decon, regs, 0);
-#endif
 #endif
 	DPU_EVENT_LOG_WINCON(&decon->sd, regs, UH_ID_NORMAL);
 
@@ -3185,28 +3145,38 @@ static void decon_update_regs(struct decon_device *decon,
 		}
 
 		if (!regs->num_of_window) {
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
-			if (regs->dpp_config[DECON_WIN_UPDATE_IDX].state &
-				DECON_WIN_STATE_MRESOL)
-				dpu_set_mres_config(decon, regs);
-#endif
 			decon_save_cur_buf_info(decon, regs);
 			decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
 			goto end;
 		}
 	} else {
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
-		if (regs->dpp_config[DECON_WIN_UPDATE_IDX].state &
+		if (regs->dpp_config[DECON_WIN_UPDATE_IDX].state ==
 				DECON_WIN_STATE_MRESOL) {
 			dpu_set_mres_config(decon, regs);
-#if IS_ENABLED(CONFIG_EXYNOS_FPS_CHANGE_NOTIFY)
-			if (decon->lcd_info->fps != regs->fps)
-				notify_fps_change(regs->fps);
+			if (regs->mode_update) {
+				if ((decon->dt.psr_mode == DECON_MIPI_COMMAND_MODE) &&
+					(decon->dt.trig_mode == DECON_HW_TRIG)) {
+					if (decon_reg_wait_update_done_timeout(decon->id,
+								SHADOW_UPDATE_TIMEOUT) < 0)
+						decon_err("%s(%d) shadow update timeout\n", __func__, __LINE__);
+					decon_reg_set_trigger(decon->id, &psr, DECON_TRIG_DISABLE);
+				}
+				dpu_set_mres_config(decon, regs);
+#if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
+				prev_fps = decon->lcd_info->fps;
 #endif
-			dsim = container_of(decon->out_sd[0], struct dsim_device, sd);
-			dsim_call_panel_ops(dsim, EXYNOS_PANEL_IOC_SET_VREFRESH,
-					&(regs->fps));
+				if (decon->lcd_info->fps != regs->fps)
+					dpu_update_fps(decon, regs->fps);
+#if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
+				if (prev_fps != regs->fps)
+					migov_update_fps_change(regs->fps);
+#endif
+			}
 		} else {
+			for (i = 0; i < decon->dt.max_win; i++)
+				decon_reg_set_win_enable(decon->id, i, false);
+			decon_reg_all_win_shadow_update_req(decon->id);
+			decon_reg_update_req_global(decon->id);
 			if ((decon->dt.psr_mode == DECON_MIPI_COMMAND_MODE) &&
 					(decon->dt.trig_mode == DECON_HW_TRIG)) {
 				decon_reg_set_trigger(decon->id, &psr, DECON_TRIG_ENABLE);
@@ -3215,21 +3185,17 @@ static void decon_update_regs(struct decon_device *decon,
 						ktime_set(0, 0));
 			}
 
-			for (i = 0; i < decon->dt.max_win; i++)
-				decon_reg_set_win_enable(decon->id, i, false);
-			decon_reg_all_win_shadow_update_req(decon->id);
-			decon_reg_update_req_global(decon->id);
-
 			DPU_EVENT_LOG(DPU_EVT_STORE_RSC, &decon->sd, ktime_set(0, 0));
 		}
-#endif
 		decon_save_cur_buf_info(decon, regs);
 		decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
 
 		if (!(regs->dpp_config[DECON_WIN_UPDATE_IDX].state & DECON_WIN_STATE_MRESOL)
 				&& (decon->dt.psr_mode == DECON_MIPI_COMMAND_MODE)
 				&& (decon->dt.trig_mode == DECON_HW_TRIG)) {
-			decon_reg_wait_update_done_timeout(decon->id, SHADOW_UPDATE_TIMEOUT);
+			if (decon_reg_wait_update_done_timeout(decon->id,
+							SHADOW_UPDATE_TIMEOUT) < 0)
+				decon_err("%s(%d) shadow update timeout\n", __func__, __LINE__);
 			decon_reg_set_trigger(decon->id, &psr, DECON_TRIG_DISABLE);
 			DPU_EVENT_LOG(DPU_EVT_TRIG_MASK, &decon->sd, ktime_set(0, 0));
 			DPU_EVENT_LOG(DPU_EVT_STORE_RSC, &decon->sd, ktime_set(0, 0));
@@ -3288,16 +3254,13 @@ static void decon_update_regs(struct decon_device *decon,
 
 end:
 #if defined(CONFIG_EXYNOS_BTS)
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
 	/* add update bw : cur < prev */
 	/* TODO: if multi resolution requeset X */
-	if (!(regs->dpp_config[DECON_WIN_UPDATE_IDX].state &
-			DECON_WIN_STATE_MRESOL))
+	if (regs->dpp_config[DECON_WIN_UPDATE_IDX].state != DECON_WIN_STATE_MRESOL)
 		decon->bts.ops->bts_update_bw(decon, regs, 1);
 #else
 	/* add update bw : cur < prev */
 	decon->bts.ops->bts_update_bw(decon, regs, 1);
-#endif
 #endif
 
 	/*
@@ -3314,19 +3277,14 @@ end:
 
 fence_err:
 	decon_release_old_bufs(decon, regs, old_dma_bufs, old_plane_cnt, import_cnt, import_time);
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
-	if (!(regs->dpp_config[DECON_WIN_UPDATE_IDX].state &
-			DECON_WIN_STATE_MRESOL)) {
-		decon_signal_fence(decon, regs->retire_fence);
-		dma_fence_put(regs->retire_fence);
-	}
-#else
 	decon_signal_fence(decon, regs->retire_fence);
 	dma_fence_put(regs->retire_fence);
-#endif
 	DPU_EVENT_LOG(DPU_EVT_FENCE_RELEASE, &decon->sd, ktime_set(0, 0));
-#ifdef CONFIG_EXYNOS_FPS_CHANGE_NOTIFY
-	ems_frame_cnt++;
+#if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
+	if (decon->dt.out_type == DECON_OUT_DSI) {
+		ems_frame_cnt++;
+		ems_frame_cnt_time = ktime_get();
+	}
 #endif
 #if defined(CONFIG_EXYNOS_AFBC_DEBUG)
 	decon_save_afbc_enabled_win_id(decon, regs);
@@ -3361,10 +3319,6 @@ int decon_update_last_regs(struct decon_device *decon,
 
 	decon_update_hdr_info(decon, regs);
 
-	if (regs->dpp_config[DECON_WIN_UPDATE_IDX].state ==
-			DECON_WIN_STATE_MRESOL)
-		dpu_update_mres_lcd_info(decon, regs);
-
 #if defined(CONFIG_EXYNOS_BTS)
 	/* add calc and update bw : cur > prev */
 	decon->bts.ops->bts_calc_bw(decon, regs);
@@ -3393,7 +3347,7 @@ int decon_update_last_regs(struct decon_device *decon,
 	if (decon->cursor.unmask)
 		decon_set_cursor_unmask(decon, false);
 
-	decon_wait_for_vstatus(decon, 50);
+	//decon_wait_for_vstatus(decon, 50);
 	if (decon_reg_wait_update_done_timeout(decon->id, SHADOW_UPDATE_TIMEOUT) < 0) {
 		decon_err("%s shadow update timeout\n", __func__);
 		ret = -ETIMEDOUT;
@@ -3519,8 +3473,13 @@ int decon_check_global_limitation(struct decon_device *decon,
 {
 	int i, j;
 	int ret = 0;
+	int num_win_en;
 
-	for (i = 0; i < MAX_DECON_WIN; i++) {
+	for (i = 0, num_win_en = 0; i < MAX_DECON_WIN; i++) {
+		if (config[i].state == DECON_WIN_STATE_BUFFER ||
+				config[i].state == DECON_WIN_STATE_COLOR)
+			num_win_en++;
+
 		if (config[i].state != DECON_WIN_STATE_BUFFER)
 			continue;
 
@@ -3544,6 +3503,14 @@ int decon_check_global_limitation(struct decon_device *decon,
 				goto err;
 			}
 		}
+	}
+
+	if (config[MAX_DECON_WIN].state == DECON_WIN_STATE_MRESOL)
+		num_win_en++;
+
+	if (num_win_en == 0) {
+		ret = -EINVAL;
+		goto err;
 	}
 
 	ret = decon_reg_check_global_limitation(decon, config);
@@ -3663,44 +3630,6 @@ config_err:
 	return ret;
 }
 
-/* To check original win_config data delivered from HWC
- * - idx   : to find a matching up_handler
- *           if (NORMAL) updated, else (-1)
- * - fps   : newly requested fps or existing fps info
- * - winup : Partial or MRES config info
- */
-static void decon_save_win_config_event(struct decon_device *decon,
-		struct decon_win_config_data *win_data, enum dpu_wc_id id)
-{
-	decon->win_raw.id = id;
-	decon->win_raw.idx = -1;
-	decon->win_raw.fps = decon->lcd_info->fps;
-
-	if (id & WC_ID_FAIL) {
-		decon->win_raw.state = WC_ID_FAIL;
-		memset(&decon->win_raw.winup, 0,
-				sizeof(struct decon_frame));
-	} else if (id & (WC_ID_SKIP | WC_ID_NORMAL)) {
-		if (id & WC_ID_NORMAL)
-			decon->win_raw.idx = decon->wc_idx;
-		decon->win_raw.fps = win_data->fps;
-		if (decon->win_raw.fps != 0)
-			decon->win_raw.id |= WC_ID_FPS;
-		decon->win_raw.state =
-				win_data->config[DECON_WIN_UPDATE_IDX].state;
-		memcpy(&decon->win_raw.winup,
-				&win_data->config[DECON_WIN_UPDATE_IDX].dst,
-				sizeof(struct decon_frame));
-	} else {
-		decon_err("Unknown Win_Config ID(%d)\n", id);
-		memset(&decon->win_raw.winup, 0,
-				sizeof(struct decon_frame));
-	}
-
-	DPU_EVENT_LOG(DPU_EVT_WIN_CONFIG, &decon->sd, ktime_set(0, 0));
-}
-
-#ifndef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
 static int decon_set_vrr(struct decon_device *decon,
 	struct decon_win_config_data *win_data, struct decon_reg_data *regs)
 {
@@ -3711,7 +3640,8 @@ static int decon_set_vrr(struct decon_device *decon,
 	vrr_config = &regs->vrr_config;
 	vrr_state = win_data->config[DECON_WIN_UPDATE_IDX].state;
 	if ((vrr_state != DECON_WIN_STATE_VRR_NORMALMODE) &&
-		(vrr_state != DECON_WIN_STATE_VRR_HSMODE)) {
+		(vrr_state != DECON_WIN_STATE_VRR_HSMODE) &&
+		(vrr_state != DECON_WIN_STATE_VRR_PASSIVEMODE)) {
 		decon_err("[VRR] %s:invalid win_state(%x)\n",
 				__func__, vrr_state);
 		return -EINVAL;
@@ -3728,8 +3658,12 @@ static int decon_set_vrr(struct decon_device *decon,
 		notify_fps_change(win_data->fps);
 #endif
 	vrr_config->fps = win_data->fps;
-	vrr_config->mode = (vrr_state == DECON_WIN_STATE_VRR_HSMODE) ?
-		WIN_VRR_HS_MODE : WIN_VRR_NORMAL_MODE;
+	if (vrr_state == DECON_WIN_STATE_VRR_NORMALMODE)
+		vrr_config->mode = WIN_VRR_NORMAL_MODE;
+	else if (vrr_state == DECON_WIN_STATE_VRR_HSMODE)
+		vrr_config->mode = WIN_VRR_HS_MODE;
+	else if (vrr_state == DECON_WIN_STATE_VRR_PASSIVEMODE)
+		vrr_config->mode = WIN_VRR_PASSIVE_MODE;
 	regs->fps_update = VRR_UPDATE;
 	decon_info("[VRR] %s:%d%s\n",
 			__func__, vrr_config->fps,
@@ -3737,7 +3671,6 @@ static int decon_set_vrr(struct decon_device *decon,
 
 	return 0;
 }
-#endif
 
 static int decon_set_win_config(struct decon_device *decon,
 		struct decon_win_config_data *win_data)
@@ -3766,7 +3699,7 @@ static int decon_set_win_config(struct decon_device *decon,
 #endif
 		decon->state == DECON_STATE_TUI ||
 		IS_ENABLED(CONFIG_EXYNOS_VIRTUAL_DISPLAY)) {
-		decon_save_win_config_event(decon, win_data, WC_ID_SKIP);
+		//decon_save_win_config_event(decon, win_data, WC_ID_SKIP);
 #if defined(CONFIG_EXYNOS_COMMON_PANEL) || \
 	defined(CONFIG_EXYNOS_READ_ESD_SOLUTION)
 		decon_warn("decon-%d skip win_config(state:%s, bypass:%s)\n",
@@ -3815,7 +3748,7 @@ static int decon_set_win_config(struct decon_device *decon,
 #endif
 
 	decon->wc_idx++;
-	decon_save_win_config_event(decon, win_data, WC_ID_NORMAL);
+	//decon_save_win_config_event(decon, win_data, WC_ID_NORMAL);
 
 	num_of_window = decon_get_active_win_count(decon, win_data, &readback_req);
 	if (num_of_window) {
@@ -3839,12 +3772,8 @@ static int decon_set_win_config(struct decon_device *decon,
 		}
 #endif
 	} else {
-		decon_info("%s: fps(%d->%d) update request!\n", __func__,
-				decon->lcd_info->fps, win_data->fps);
 		win_data->retire_fence = -1;
-#ifdef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
 		regs->fps = win_data->fps;
-#else
 		if (decon_set_vrr(decon, win_data, regs) < 0) {
 			decon_err("[VRR] %s:failed to set vrr\n", __func__);
 			goto err_prepare;
@@ -3896,18 +3825,15 @@ static int decon_set_win_config(struct decon_device *decon,
 	}
 #endif
 
-#ifndef CONFIG_EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
 add_new_regs:
-#endif
 	mutex_lock(&decon->up.lock);
 	list_add_tail(&regs->list, &decon->up.list);
-	win_data->extra.remained_frames =
-		atomic_inc_return(&decon->up.remaining_frame);
-	if (win_data->extra.remained_frames >= 20) {
-		decon_info("[DECON%d:WARN]:%s:remaining_frame: %d\n", decon->id,
-			__func__, win_data->extra.remained_frames);
-	}
-
+	atomic_inc(&decon->up.remaining_frame);
+		atomic_read(&decon->up.remaining_frame);
+	if (atomic_read(&decon->up.remaining_frame) >= 20)
+		decon_warn("%s: decon-%d fps:%d remaining_frame:%d\n",
+				__func__, decon->id, decon->lcd_info->fps,
+				atomic_read(&decon->up.remaining_frame));
 
 	mutex_unlock(&decon->up.lock);
 
@@ -3929,10 +3855,14 @@ add_new_regs:
 	if (num_of_window)
 		fd_install(win_data->retire_fence, sync_ifile->file);
 
+	/*
+	 * HWC 2.4 requires in case of resolution change
+	 * that dpu driver operates in blocking mode.
+	 */
 	if (decon->mres_enabled &&
-			(win_data->config[DECON_WIN_UPDATE_IDX].state == DECON_WIN_STATE_MRESOL) &&
-			((win_data->config[DECON_WIN_UPDATE_IDX].dst.f_w != decon->lcd_info->xres) ||
-			 (win_data->config[DECON_WIN_UPDATE_IDX].dst.f_h != decon->lcd_info->yres))) {
+		(win_data->config[DECON_WIN_UPDATE_IDX].state == DECON_WIN_STATE_MRESOL) &&
+		((win_data->config[DECON_WIN_UPDATE_IDX].dst.f_w != decon->lcd_info->xres) ||
+		(win_data->config[DECON_WIN_UPDATE_IDX].dst.f_h != decon->lcd_info->yres))) {
 		decon_dbg("MRESOL: flush up.worker(%d frames) +\n",
 				atomic_read(&decon->up.remaining_frame));
 		kthread_flush_worker(&decon->up.worker);
@@ -4222,11 +4152,9 @@ static int decon_ioctl(struct fb_info *info, unsigned int cmd,
 	struct decon_readback_attribute readback_attr;
 	struct decon_edid_data edid_data;
 	struct dpp_ch_restriction dpp_ch_restriction;
-#ifdef CONFIG_EXYNOS_SET_ACTIVE
 	struct exynos_display_mode display_mode;
 	struct exynos_display_mode *mode;
 	struct decon_reg_data decon_regs;
-#endif
 	int ret = 0;
 	u32 crtc;
 	bool active;
@@ -4601,7 +4529,6 @@ static int decon_ioctl(struct fb_info *info, unsigned int cmd,
 		}
 		break;
 
-#ifdef CONFIG_EXYNOS_SET_ACTIVE
 	case EXYNOS_GET_DISPLAY_MODE_NUM:
 		if (copy_to_user((int __user *)arg, &lcd_info->display_mode_count,
 					sizeof(int))) {
@@ -4707,7 +4634,6 @@ static int decon_ioctl(struct fb_info *info, unsigned int cmd,
 			}
 		}
 		break;
-#endif
 
 	case EXYNOS_GET_DISPLAY_CURRENT_MODE:
 		if (copy_to_user((u32 __user *)arg, &lcd_info->cur_mode_idx, sizeof(u32)))
@@ -5756,11 +5682,6 @@ static int decon_probe(struct platform_device *pdev)
 	snprintf(device_name, MAX_NAME_SIZE, "decon%d", decon->id);
 	decon_create_timeline(decon, device_name);
 
-#if defined(CONFIG_DECON_VRR_MODULATION)
-	/* mod count */
-	decon->vsync.div_count = 1ULL;
-#endif
-
 	/* systrace */
 	decon_systrace_enable = 0;
 	decon->systrace.pid = 0;
@@ -5834,11 +5755,6 @@ static int decon_probe(struct platform_device *pdev)
 #if defined(CONFIG_EXYNOS_BTS)
 	decon->bts.ops = &decon_bts_control;
 	decon->bts.ops->bts_init(decon);
-#endif
-
-#if IS_ENABLED(CONFIG_EXYNOS_FPS_CHANGE_NOTIFY)
-	if (decon->id == 0)
-		ATOMIC_INIT_NOTIFIER_HEAD(&decon->fps_change_notifier_list);
 #endif
 
 	platform_set_drvdata(pdev, decon);

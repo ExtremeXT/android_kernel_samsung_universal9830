@@ -472,13 +472,13 @@ void dpu_bts_calc_bw(struct decon_device *decon, struct decon_reg_data *regs)
 	memset(&bts_info, 0, sizeof(struct bts_decon_info));
 #if defined(CONFIG_DECON_BTS_VRR_ASYNC)
 	if (decon->dt.out_type == DECON_OUT_DSI) {
-		if ((decon->bts.fps < decon->bts.next_fps) ||
-			(decon->bts.fps > decon->bts.next_fps &&
-			 decon->bts.next_fps_vsync_count <= decon->vsync.count)) {
-			DPU_DEBUG_BTS("\tupdate fps(%d->%d) vsync(%llu %llu)\n",
-					decon->bts.fps, decon->bts.next_fps,
-					decon->vsync.count, decon->bts.next_fps_vsync_count);
-			decon->bts.fps = decon->bts.next_fps;
+		u32 bts_fps =
+			decon_bts_get_bts_fps(&decon->bts, decon->vsync.count);
+
+		if (decon->bts.fps != bts_fps) {
+			DPU_DEBUG_BTS("\tupdate fps(%d->%d) timeline(%llu)\n",
+					decon->bts.fps, bts_fps, decon->vsync.count);
+			decon->bts.fps = bts_fps;
 		}
 	} else {
 		decon->bts.fps = decon->lcd_info->fps;
@@ -689,20 +689,33 @@ void dpu_bts_acquire_bw(struct decon_device *decon)
 
 	decon->bts.fps = decon->lcd_info->fps;
 #if defined(CONFIG_DECON_BTS_VRR_ASYNC)
-	decon->bts.next_fps = decon->lcd_info->fps;
+	if (decon->dt.out_type == DECON_OUT_DSI) {
+		decon_bts_clear_fps_sync(&decon->bts);
+		decon_bts_set_applied_fps(&decon->bts, decon->lcd_info->fps);
+	}
 #endif
 	if (decon->dt.out_type == DECON_OUT_DSI) {
+		u32 bts_fps;
+
+		/* 
+		 * command mode panel trigger will be enabled
+		 * until first winconfig. To prevent underrun,
+		 * set bts_fps as maximum refresh-rate.
+		 */
+		bts_fps = IS_EXYNOS_VRR_HS_MODE(decon->lcd_info->vrr_mode) ?
+			120 : decon->bts.fps;
+
 		memset(&config, 0, sizeof(struct decon_win_config));
 		config.src.w = config.dst.w = decon->lcd_info->xres;
 		config.src.h = config.dst.h = decon->lcd_info->yres;
 
 		resol_clock = dpu_bts_get_resol_clock(decon->lcd_info->xres,
-				decon->lcd_info->yres, decon->bts.fps);
+				decon->lcd_info->yres, bts_fps);
 		decon->bts.resol_clk = (u32)resol_clock;
 
 		aclk_freq = dpu_bts_calc_aclk_disp(decon, &config, resol_clock);
 		DPU_DEBUG_BTS("Initial calculated disp freq(%lu) @%d fps\n",
-				aclk_freq, decon->bts.fps);
+				aclk_freq, bts_fps);
 		/*
 		 * If current disp freq is higher than calculated freq,
 		 * it must not be set. if not, underrun can occur.
@@ -874,7 +887,10 @@ void dpu_bts_init(struct decon_device *decon)
 	} else {
 		decon->bts.fps = decon->lcd_info->fps;
 #if defined(CONFIG_DECON_BTS_VRR_ASYNC)
-		decon->bts.next_fps = decon->lcd_info->fps;
+		if (decon->dt.out_type == DECON_OUT_DSI) {
+			decon_bts_init_fps_sync(&decon->bts);
+			decon_bts_set_applied_fps(&decon->bts, decon->lcd_info->fps);
+		}
 #endif
 		resol_clock = dpu_bts_get_resol_clock(decon->lcd_info->xres,
 				decon->lcd_info->yres, decon->bts.fps);

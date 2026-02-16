@@ -453,8 +453,9 @@ enum decon_supported_color_mode {
 
 
 #define VRR_UPDATE				0x80000000
-#define WIN_VRR_HS_MODE			1
 #define WIN_VRR_NORMAL_MODE		0
+#define WIN_VRR_HS_MODE			1
+#define WIN_VRR_PASSIVE_MODE		2
 
 struct decon_color_mode_info {
 	int index;
@@ -535,6 +536,7 @@ struct decon_win_config {
 		DECON_WIN_STATE_MRESOL = 0x10000,
 		DECON_WIN_STATE_VRR_NORMALMODE= 0x20000,
 		DECON_WIN_STATE_VRR_HSMODE = 0x20001,
+		DECON_WIN_STATE_VRR_PASSIVEMODE = 0x20002,
 #ifdef CONFIG_SUPPORT_MASK_LAYER
 		DECON_WIN_STATE_FINGERPRINT = 0x30000,
 #endif
@@ -602,6 +604,7 @@ struct decon_reg_data {
 	u32 lcd_width;
 	u32 lcd_height;
 
+	u32 fps;
 	u32 fps_update;
 	struct vrr_config_data vrr_config;
 
@@ -2139,6 +2142,11 @@ void dpu_pll_sleep_unmask(struct decon_device *decon);
 u32 decon_processed_linecnt(struct decon_device *decon);
 int _decon_disable(struct decon_device *decon, enum decon_state state);
 int _decon_enable(struct decon_device *decon, enum decon_state state);
+
+void dpu_update_fps(struct decon_device *decon, u32 fps);
+
+void decon_update_win_update(struct decon_device *decon,
+		struct decon_reg_data *regs);
 
 /* IOCTL commands */
 #define S3CFB_SET_VSYNC_INT		_IOW('F', 206, __u32)

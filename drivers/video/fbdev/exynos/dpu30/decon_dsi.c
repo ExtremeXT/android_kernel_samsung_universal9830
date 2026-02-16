@@ -20,6 +20,7 @@
 #include <linux/irq.h>
 #include <drm/drm_edid.h>
 #include <media/v4l2-subdev.h>
+#include "./panels/exynos_panel_drv.h"
 #if defined(CONFIG_EXYNOS_ALT_DVFS)
 #include <soc/samsung/exynos-alt.h>
 #endif
@@ -47,9 +48,10 @@ struct task_struct *devfreq_change_task;
 #include "../panel/panel_drv.h"
 #endif
 
-#ifdef CONFIG_EXYNOS_FPS_CHANGE_NOTIFY
+#if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
 u64 frame_vsync_cnt;
-EXPORT_SYMBOL(frame_vsync_cnt);
+ktime_t frame_vsync_cnt_time;
+//EXPORT_SYMBOL(frame_vsync_cnt);
 #endif
 
 /* DECON irq handler for DSI interface */
@@ -385,23 +387,15 @@ static irqreturn_t decon_ext_irq_handler(int irq, void *dev_id)
 			}
 		}
 	}
-#ifdef CONFIG_EXYNOS_FPS_CHANGE_NOTIFY
+#if IS_ENABLED(CONFIG_EXYNOS_MIGOV)
 	frame_vsync_cnt++;
+	frame_vsync_cnt_time = ktime_get();
 #endif
 
 	decon_systrace(decon, 'C', "decon_te_signal", 0);
+#if IS_ENABLED(CONFIG_MCD_PANEL)
 	decon->vsync.count++;
-#if defined(CONFIG_EXYNOS_COMMON_PANEL)
 	decon->vsync.period = ktime_us_delta(timestamp, decon->vsync.timestamp);
-	decon_dbg("Decon TE(%llu) elapsed(%2lld.%03lldmsec)\n",
-			decon->vsync.count, decon->vsync.period / 1000,
-			decon->vsync.period % 1000);
-#endif
-#if defined(CONFIG_DECON_VRR_MODULATION)
-	div_count = IS_DECON_DOZE_STATE(decon) ?
-		1ULL : decon->vsync.div_count;
-	if ((decon->vsync.count % div_count) == 0)
-		decon->vsync.active_count++;
 #endif
 	decon->vsync.timestamp = timestamp;
 	wake_up_interruptible_all(&decon->vsync.wait);
@@ -463,9 +457,16 @@ static ssize_t decon_show_vsync(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct decon_device *decon = dev_get_drvdata(dev);
+	struct exynos_panel_info *lcd_info = decon->lcd_info;
 
-	return scnprintf(buf, PAGE_SIZE, "%llu\n",
-			ktime_to_ns(decon->vsync.timestamp));
+#if IS_ENABLED(CONFIG_EXYNOS_DECON_LCD)
+	if (decon->id == 0)
+		return scnprintf(buf, PAGE_SIZE, "%llu %d\n",
+				ktime_to_ns(decon->vsync.timestamp),
+				lcd_info->display_mode[lcd_info->cur_mode_idx].mode.fps);
+#endif
+	return scnprintf(buf, PAGE_SIZE, "%llu %d\n",
+			ktime_to_ns(decon->vsync.timestamp), lcd_info->fps);
 }
 static DEVICE_ATTR(vsync, S_IRUGO, decon_show_vsync, NULL);
 
@@ -475,22 +476,11 @@ static int decon_vsync_thread(void *data)
 
 	while (!kthread_should_stop()) {
 		ktime_t timestamp = decon->vsync.timestamp;
-#if defined(CONFIG_DECON_VRR_MODULATION)
-		u64 active_count = decon->vsync.active_count;
-#endif
 		int ret = wait_event_interruptible(decon->vsync.wait,
 			(timestamp != decon->vsync.timestamp) &&
 			decon->vsync.active);
-		if (!ret) {
-#if defined(CONFIG_DECON_VRR_MODULATION)
-			if (active_count == decon->vsync.active_count) {
-				pr_debug("%s active_count:%llu div_count:%llu - notify skip\n",
-						__func__, decon->vsync.active_count, decon->vsync.div_count);
-				continue;
-			}
-#endif
+		if (!ret)
 			sysfs_notify(&decon->dev->kobj, NULL, "vsync");
-		}
 	}
 
 	return 0;
@@ -2193,4 +2183,81 @@ void dpu_pll_sleep_unmask(struct decon_device *decon)
 #else
 void dpu_pll_sleep_mask(struct decon_device * decon) {}
 void dpu_pll_sleep_unmask(struct decon_device * decon) {}
+#endif
+
+void dpu_update_fps(struct decon_device *decon, u32 fps)
+{
+	struct dsim_device *dsim;
+
+	if (decon == NULL)
+		return;
+
+	dsim = container_of(decon->out_sd[0], struct dsim_device, sd);
+	dsim_call_panel_ops(dsim, EXYNOS_PANEL_IOC_SET_VREFRESH, &fps);
+
+	decon_reg_wait_idle_status_timeout(decon->id, IDLE_WAIT_TIMEOUT);
+	dsim_reg_set_cmd_ctrl(dsim->id, decon->lcd_info, &dsim->clks);
+
+#if defined(CONFIG_EXYNOS_EWR)
+	//decon_reg_update_ewr_control(decon->id, fps);
+#endif
+}
+
+#if defined(CONFIG_EXYNOS_WINDOW_UPDATE)
+/*
+ * When fence error occurs in update_list that requires window_update,
+ * below function is required to perform only window_update
+ * to prevent shadow update timeout due to size mis-match
+ */
+void decon_update_win_update(struct decon_device *decon,
+		struct decon_reg_data *regs)
+{
+	int win_idx;
+	struct decon_mode_info psr;
+
+	if (decon->dt.out_type != DECON_OUT_DSI)
+		return;
+
+	decon_to_psr_info(decon, &psr);
+	if (decon_reg_wait_update_done_and_mask(decon->id, &psr,
+				SHADOW_UPDATE_TIMEOUT) < 0)
+		decon_warn("decon SHADOW_UPDATE_TIMEOUT\n");
+
+	/* apply window update configuration to DECON, DSIM and panel */
+	dpu_set_win_update_config(decon, regs);
+
+	for (win_idx = 0; win_idx < decon->dt.max_win; win_idx++)
+		decon_reg_set_win_enable(decon->id, win_idx, false);
+	decon_reg_all_win_shadow_update_req(decon->id);
+
+	decon_reg_start(decon->id, &psr);
+
+	DPU_EVENT_LOG(DPU_EVT_TRIG_UNMASK, &decon->sd, ktime_set(0, 0));
+
+	decon->frame_cnt_target = decon->frame_cnt + 1;
+
+	decon_systrace(decon, 'C', "decon_wait_vsync", 1);
+	decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
+	decon_systrace(decon, 'C', "decon_wait_vsync", 0);
+
+	decon_wait_for_vstatus(decon, 50);
+	if (decon_reg_wait_update_done_timeout(decon->id,
+				SHADOW_UPDATE_TIMEOUT) < 0) {
+#if defined(CONFIG_EXYNOS_READ_ESD_SOLUTION)
+		if (decon_is_bypass(decon))
+			return;
+#endif
+		decon_dump(decon, true);
+		BUG();
+	}
+
+	if (!decon->low_persistence) {
+		decon_reg_set_trigger(decon->id, &psr, DECON_TRIG_DISABLE);
+		DPU_EVENT_LOG(DPU_EVT_TRIG_MASK, &decon->sd, ktime_set(0, 0));
+	}
+}
+#else
+void decon_update_win_update(struct decon_device *decon,
+		struct decon_reg_data *regs)
+{}
 #endif

@@ -71,6 +71,7 @@ void dsim_reg_enable_shadow_read(u32 id, u32 en);
 void dsim_reg_function_reset(u32 id);
 void dsim_reg_set_partial_update(u32 id, struct exynos_panel_info *lcd_info);
 void dsim_reg_set_mres(u32 id, struct exynos_panel_info *lcd_info);
+void dsim_reg_set_cmd_ctrl(u32 id, struct exynos_panel_info *lcd_info, struct dsim_clks *clks);
 
 /* DSIM BIST for test */
 void dsim_reg_set_bist(u32 id, u32 en);

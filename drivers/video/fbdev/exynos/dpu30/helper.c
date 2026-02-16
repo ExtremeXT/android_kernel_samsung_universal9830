@@ -571,31 +571,6 @@ void lcd_status_notifier(u32 lcd_status)
 	atomic_notifier_call_chain(&lcd_status_notifier_list, lcd_status, NULL);
 }
 
-#if IS_ENABLED(CONFIG_EXYNOS_FPS_CHANGE_NOTIFY)
-int register_fps_change_notifier(struct notifier_block *nb)
-{
-	struct decon_device *decon = get_decon_drvdata(0);
-
-	return atomic_notifier_chain_register(&decon->fps_change_notifier_list, nb);
-}
-EXPORT_SYMBOL(register_fps_change_notifier);
-
-int unregister_fps_change_notifier(struct notifier_block *nb)
-{
-	struct decon_device *decon = get_decon_drvdata(0);
-
-	return atomic_notifier_chain_unregister(&decon->fps_change_notifier_list, nb);
-}
-EXPORT_SYMBOL(unregister_fps_change_notifier);
-
-void notify_fps_change(u32 fps)
-{
-	struct decon_device *decon = get_decon_drvdata(0);
-
-	atomic_notifier_call_chain(&decon->fps_change_notifier_list, fps, NULL);
-}
-#endif
-
 int dpu_sysmmu_fault_handler(struct iommu_domain *domain,
 	struct device *dev, unsigned long iova, int flags, void *token)
 {

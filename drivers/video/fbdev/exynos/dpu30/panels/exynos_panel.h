@@ -87,23 +87,40 @@ struct exynos_dsc {
 	u32 enc_sw;
 };
 
-/*
- * TODO : VRR NS/HS MODE need to be unified.
- * - dpu30/decon.h : WIN_VRR_NORMAL_MODE, WIN_VRR_HS_MODE
- * - dpu30/exynos_panel.h : EXYNOS_PANEL_VRR_NS_MODE, EXYNOS_PANEL_VRR_HS_MODE
- * - panel/panel.h : VRR_NORMAL_MODE, VRR_HS_MODE,
- */
 enum {
 	EXYNOS_PANEL_VRR_NS_MODE = 0,
 	EXYNOS_PANEL_VRR_HS_MODE = 1,
+	EXYNOS_PANEL_VRR_PASSIVE_HS_MODE = 2,
 };
 
 static inline char *EXYNOS_VRR_MODE_STR(int vrr_mode)
 {
-	return (vrr_mode == EXYNOS_PANEL_VRR_NS_MODE) ?  "NS" : "HS";
+	if (vrr_mode == EXYNOS_PANEL_VRR_NS_MODE)
+		return "NS";
+	else if (vrr_mode == EXYNOS_PANEL_VRR_HS_MODE)
+		return "HS";
+	else if (vrr_mode == EXYNOS_PANEL_VRR_PASSIVE_HS_MODE)
+		return "pHS";
+	else
+		return "NONE";
 }
 
-#define MAX_DISPLAY_MODE		32
+static inline bool IS_EXYNOS_VRR_NS_MODE(int vrr_mode)
+{
+	return (vrr_mode == EXYNOS_PANEL_VRR_NS_MODE);
+}
+
+static inline bool IS_EXYNOS_VRR_HS_MODE(int vrr_mode)
+{
+	return (vrr_mode == EXYNOS_PANEL_VRR_HS_MODE ||
+			vrr_mode == EXYNOS_PANEL_VRR_PASSIVE_HS_MODE);
+}
+
+static inline bool IS_EXYNOS_VRR_PASSIVE_MODE(int vrr_mode)
+{
+	return (vrr_mode == EXYNOS_PANEL_VRR_PASSIVE_HS_MODE);
+}
+#endif
 /* exposed to user */
 struct exynos_display_mode_old {
 	u32 index;
